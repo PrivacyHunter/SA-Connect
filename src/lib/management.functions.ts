@@ -11,7 +11,7 @@ export const getPanel = createServerFn({ method: "POST" }).middleware([requireSu
   if (error) throw error;
   if (!role) return { authorized: false as const };
   const { supabaseAdmin: admin } = await import("@/integrations/supabase/client.server");
-  const [users, roles, controls, posts, reels, videos, listings, payments, premium] = await Promise.all([
+  const [users, roles, controls, posts, reels, videos, listings, payments, premium, reports] = await Promise.all([
     admin.auth.admin.listUsers({ page: 1, perPage: 1000 }), admin.from("user_roles").select("*"), admin.from("account_controls").select("*"),
     admin.from("posts").select("id,caption,author_id,created_at").order("created_at", { ascending: false }).limit(200),
     admin.from("reels").select("id,caption,author_id,created_at").order("created_at", { ascending: false }).limit(200),
@@ -19,15 +19,17 @@ export const getPanel = createServerFn({ method: "POST" }).middleware([requireSu
     admin.from("marketplace_listings").select("id,title,seller_id,created_at").order("created_at", { ascending: false }).limit(200),
     admin.from("payment_requests").select("id,user_id,screenshot_path,note,status,created_at").order("created_at", { ascending: false }).limit(200),
     admin.from("premium_access").select("user_id,premium_until"),
+    admin.from("user_reports").select("id,reporter_id,reported_id,conversation_id,reason,status,created_at").order("created_at", { ascending: false }).limit(200),
   ]);
-  for (const result of [users, roles, controls, posts, reels, videos, listings, payments, premium]) if (result.error) throw result.error;
+  for (const result of [users, roles, controls, posts, reels, videos, listings, payments, premium, reports]) if (result.error) throw result.error;
   return { authorized: true as const, role: role.role as ManagementRole, userId: context.userId,
     users: users.data.users.map(u => ({ id: u.id, email: u.email ?? "", created: u.created_at, role: roles.data?.find(r => r.user_id === u.id)?.role as ManagementRole | undefined, status: controls.data?.find(c => c.user_id === u.id)?.status ?? "active", premium_until: premium.data?.find(p => p.user_id === u.id)?.premium_until ?? null })),
     payments: payments.data ?? [],
+    reports: reports.data ?? [],
     content: [ ...(posts.data ?? []).map(p => ({ id: p.id, title: p.caption, userId: p.author_id, type: "posts" as const })), ...(reels.data ?? []).map(p => ({ id: p.id, title: p.caption, userId: p.author_id, type: "reels" as const })), ...(videos.data ?? []).map(p => ({ id: p.id, title: p.title, userId: p.channel_id, type: "videos" as const })), ...(listings.data ?? []).map(p => ({ id: p.id, title: p.title, userId: p.seller_id, type: "marketplace_listings" as const })) ] };
 });
 
-const actionSchema = z.object({ target: z.string().uuid().optional(), action: z.enum(["active","suspended","frozen","banned","deleted","role","reset","create","content","premium","approve_payment","reject_payment"]), role: z.enum(["admin","owner","developer"]).optional(), email: z.string().email().max(255).optional(), password: z.string().min(8).max(128).optional(), table: z.enum(["posts","reels","videos","marketplace_listings"]).optional(), redirect: z.string().url().optional(), months: z.number().int().min(0).max(24).optional() });
+const actionSchema = z.object({ target: z.string().uuid().optional(), action: z.enum(["active","suspended","frozen","banned","deleted","role","reset","create","content","premium","approve_payment","reject_payment","resolve_report","dismiss_report"]), role: z.enum(["admin","owner","developer"]).optional(), email: z.string().email().max(255).optional(), password: z.string().min(8).max(128).optional(), table: z.enum(["posts","reels","videos","marketplace_listings"]).optional(), redirect: z.string().url().optional(), months: z.number().int().min(0).max(24).optional() });
 export const manageAccount = createServerFn({ method: "POST" }).middleware([requireSupabaseAuth]).inputValidator(actionSchema).handler(async ({ context, data }) => {
   const access = await context.supabase.rpc("account_can_write");
   if (access.error || !access.data) throw new Error("This account cannot manage the platform");
@@ -63,6 +65,14 @@ export const manageAccount = createServerFn({ method: "POST" }).middleware([requ
       kind: status === "approved" ? "success" : "warning",
     });
     if (notify.error) throw notify.error;
+    return { ok: true };
+  }
+  if (data.action === "resolve_report" || data.action === "dismiss_report") {
+    if (!data.target) throw new Error("Select a report");
+    const status = data.action === "resolve_report" ? "resolved" : "dismissed";
+    const upd = await admin.from("user_reports").update({ status }).eq("id", data.target);
+    if (upd.error) throw upd.error;
+    await admin.from("admin_audit").insert({ actor_id: context.userId, target_id: null, action: data.action });
     return { ok: true };
   }
   let target = data.target;
