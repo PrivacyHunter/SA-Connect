@@ -135,15 +135,17 @@ function broadcastRotation(conversationId: string) {
 }
 
 async function memberPublicKeys(conversationId: string): Promise<Map<string, JsonWebKey | null>> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("conversation_members")
     .select("user_id, profiles(public_key)")
     .eq("conversation_id", conversationId);
+  if (error) console.debug("[e2ee] members query error", error.message);
   const map = new Map<string, JsonWebKey | null>();
   for (const row of (data ?? []) as { user_id: string; profiles: { public_key: string | null } | null }[]) {
     const raw = row.profiles?.public_key ?? null;
     map.set(row.user_id, raw ? (JSON.parse(raw) as JsonWebKey) : null);
   }
+  console.debug("[e2ee] members for", conversationId.slice(0, 8), [...map.entries()].map(([u, k]) => `${u.slice(0, 8)}:${k ? k.x?.slice(0, 6) : "null"}`).join(" "));
   return map;
 }
 
@@ -169,13 +171,17 @@ export async function getConversationKey(conversationId: string, meId: string): 
   if (cached) return cached;
   const promise = (async () => {
     const members = await memberPublicKeys(conversationId);
-    if (!members.has(meId)) return null; // not a member of this conversation
+    if (!members.has(meId)) {
+      console.debug("[e2ee] not a member of", conversationId.slice(0, 8), "as", meId.slice(0, 8));
+      return null; // not a member of this conversation
+    }
     const { data: conv } = await supabase
       .from("conversations")
       .select("created_by")
       .eq("id", conversationId)
       .maybeSingle();
     const creatorId = (conv as { created_by: string | null } | null)?.created_by ?? meId;
+    console.debug("[e2ee] derive conv", conversationId.slice(0, 8), "me", meId.slice(0, 8), "creator", creatorId.slice(0, 8));
 
     const fetchRows = async () =>
       (
@@ -193,17 +199,22 @@ export async function getConversationKey(conversationId: string, meId: string): 
     for (let i = 0; i < attempts; i++) {
       if (i > 0) await new Promise((r) => setTimeout(r, 900));
       const rows = await fetchRows();
+      console.debug("[e2ee] attempt", i, "rows", (rows ?? []).length, "for", meId.slice(0, 8));
       // Newest wrap first: after a key rotation everyone converges on the latest key.
       for (const row of (rows ?? []) as { wrapped_by: string; wrapped_key: string }[]) {
         const peer = members.get(row.wrapped_by);
         if (peer) {
           const key = await unwrapKey(meId, peer, row.wrapped_key);
+          console.debug("[e2ee] unwrap from", row.wrapped_by.slice(0, 8), key ? "OK" : "FAIL");
           if (key) return key;
+        } else {
+          console.debug("[e2ee] no peer key for wrapper", row.wrapped_by.slice(0, 8));
         }
       }
     }
     // No row could be unwrapped (e.g. the member's browser keys changed):
     // rotate — create a fresh conversation key and re-wrap it for everyone.
+    console.debug("[e2ee] rotate fallback for", meId.slice(0, 8));
     const raw = crypto.getRandomValues(new Uint8Array(32));
     const key = await subtle().importKey("raw", raw, { name: "AES-GCM" }, true, ["encrypt", "decrypt"]);
     const inserts: { conversation_id: string; user_id: string; wrapped_by: string; wrapped_key: string }[] = [];
@@ -218,10 +229,12 @@ export async function getConversationKey(conversationId: string, meId: string): 
         // member has no usable key yet
       }
     }
+    console.debug("[e2ee] rotation inserts", inserts.length, "targets", inserts.map((r) => r.user_id.slice(0, 8)).join(","));
     if (inserts.length) {
-      await supabase
+      const { error } = await supabase
         .from("conversation_keys")
         .upsert(inserts, { onConflict: "conversation_id,user_id,wrapped_by" });
+      if (error) console.debug("[e2ee] rotation upsert error", error.message);
       broadcastRotation(conversationId);
     }
     return key;
