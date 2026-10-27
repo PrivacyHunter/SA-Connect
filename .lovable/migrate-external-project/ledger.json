@@ -1,0 +1,18 @@
+{
+  "source": "github",
+  "repo": "PrivacyHunter/sa-connect-social-hub",
+  "app": "SA Connect",
+  "capabilities": [
+    {"capability": "application code", "source": "github repo (Lovable TanStack Start export)", "outcome": "copy into project", "status": "migrate", "next_action": "rsync source into project root, keep current .env/.lovable metadata"},
+    {"capability": "schema", "source": "drizzle/migrations 0000-0007", "outcome": "apply all migrations to new Lovable Cloud DB", "status": "migrate", "next_action": "run drizzle-kit migrate with LOVABLE_DB_MIGRATION_URL"},
+    {"capability": "records", "source": "none attached; source DB was wiped, only developer account remained", "outcome": "no import", "status": "pending", "next_action": "after preview, ask user for CSV/JSON exports of old tables + users if they want the developer account"},
+    {"capability": "auth identities", "source": "developer account only, no export", "outcome": "pending user export", "status": "pending", "next_action": "handoff after preview"},
+    {"capability": "authorization", "source": "user_roles + RLS in migrations", "outcome": "migrates with schema", "status": "migrate", "next_action": "verify panel access and role checks after migration"},
+    {"capability": "storage", "source": "storage policies in migrations 0006", "outcome": "recreate buckets/policies via migrations if present", "status": "migrate", "next_action": "verify uploads after migration"},
+    {"capability": "external providers", "source": "Twilio SMS (pending per roadmap), payment proof manual", "outcome": "none connected", "status": "accepted", "next_action": "user supplies Twilio credentials later"},
+    {"capability": "public endpoints / webhooks / schedules", "source": "none found in repo (no supabase functions dir)", "outcome": "none", "status": "accepted", "next_action": ""},
+    {"capability": "secrets", "source": ".env in repo contains only Supabase URL + publishable key (old project)", "outcome": "regenerated for new Cloud project; not copied", "status": "migrate", "next_action": "confirm new .env after enable"},
+    {"capability": "cutover", "source": "new Lovable Cloud project", "outcome": "new preview serves migrated app", "status": "migrate", "next_action": "verify flows in preview"},
+    {"capability": "verification", "source": "live chat 2-account test, one-view, delete-for-everyone, 50 signup credits, notification bell, premium one-view media re-open/save, premium sees deleted msgs", "outcome": "pending", "status": "pending", "next_action": "run Playwright two-account tests"}
+  ]
+}

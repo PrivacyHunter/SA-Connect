@@ -1,0 +1,69 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1793007114509,
+      "tag": "0000_platform_management_marketplace_contacts",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1793011376204,
+      "tag": "0001_privacy_tightening_and_levels",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793011988101,
+      "tag": "0002_restrict_comment_reads",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1793012650517,
+      "tag": "0003_file_access_settings_phone",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793015754948,
+      "tag": "0004_block_disposable_emails",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793066965673,
+      "tag": "0005_chat_encryption_delete_premium",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793067031379,
+      "tag": "0006_payments_storage_policies",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793071715307,
+      "tag": "0007_credits_referrals_notifications",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793074557669,
+      "tag": "0008_apply_project_migrations",
+      "breakpoints": true
+    }
+  ]
+}

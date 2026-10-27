@@ -1,0 +1,21 @@
+# Tasks
+- [x] Resolve mobile hook error.
+- [x] Apply uploaded logo and cyan/magenta theme with animated dimensional login.
+- [x] Remove Lovable sign-in choice; retain Google and email.
+- [x] Verify pages, tests and login presentation (live account creation and external Google authorization were not exercised).
+- [x] Add permission-based contacts and invitations (opt-in email matching; device contact picker where supported, with vCard import fallback).
+- [x] Add real marketplace listings; publishing, sold state and removal verified.
+- [x] Add protected /panel with account/content management and role rules; delete currently deactivates accounts recoverably.
+- [x] Provision requested developer account securely; developer login, panel account creation/freeze and role tests verified.
+- [x] Hide panel from non-staff, merge transparent logo, add ticker/footer/social follow, income coming-soon.
+- [x] Levels 1–1000 with unique badges; email/phone verification card; username-only discovery; fix 8 critical security findings.
+- [x] Social links + marquee editable from panel Site tab (empty links hidden).
+- [x] Restrict file downloads; rename to SA Connect; footer at page bottom; developer can view accounts and chats.
+- [x] Faster chat, end-to-end encrypted text messages, delete for me / for everyone, one-view messages.
+- [x] Message chime, call ringtone, browser notifications and per-chat mute — verified in two-account browser test.
+- [x] $2/month premium with payment proof upload and panel approval; premium keeps delete-for-everyone messages and one-view images.
+- [x] Panel premium rights: grant/remove per account, approve/reject payment proofs, editable payment instructions in Site tab.
+- [x] Wiped all old chats, accounts and records; only the developer account remains — verified clean database.
+- [ ] Phone SMS verification — code is ready; waits on connecting the Twilio SMS service.
+- [ ] Verify external invitation delivery and device contact picker on a real phone — requires user's device and messaging apps.
+- [ ] Add real payment account details in Panel → Site so users see where to send the $2.
