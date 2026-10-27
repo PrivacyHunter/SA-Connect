@@ -163,23 +163,29 @@ export type Database = {
         Row: {
           conversation_id: string
           created_at: string
+          generation: string
           user_id: string
           wrapped_by: string
           wrapped_key: string
+          wrapper_public_key: string | null
         }
         Insert: {
           conversation_id: string
           created_at?: string
+          generation?: string
           user_id: string
           wrapped_by: string
           wrapped_key: string
+          wrapper_public_key?: string | null
         }
         Update: {
           conversation_id?: string
           created_at?: string
+          generation?: string
           user_id?: string
           wrapped_by?: string
           wrapped_key?: string
+          wrapper_public_key?: string | null
         }
         Relationships: [
           {

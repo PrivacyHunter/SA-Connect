@@ -27,7 +27,7 @@ import { useCurrentProfile } from "@/hooks/use-current-user";
 import { usePremium } from "@/hooks/use-premium";
 import { useMediaSrc } from "@/hooks/use-media-url";
 import { uploadFile } from "@/lib/media";
-import { decryptStoredText, encryptText } from "@/lib/e2ee";
+import { decryptStoredText, encryptText, migrateConversationHistory } from "@/lib/e2ee";
 import { oneViewReopenable } from "@/lib/chat-rules";
 import { formatClockTime, formatDuration, timeAgo } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -227,14 +227,25 @@ function ConversationPage() {
   }, [id, qc, me]);
 
   // Re-decrypt history after a live conversation-key rotation from any member.
+  // The creator additionally re-encrypts older history into the new key so a
+  // member who rotated (e.g. new device) can read the messages again.
   useEffect(() => {
     const onRotated = (e: Event) => {
       const detail = (e as CustomEvent<{ conversationId?: string }>).detail;
-      if (detail?.conversationId === id) void qc.invalidateQueries({ queryKey: ["messages", id] });
+      if (detail?.conversationId !== id) return;
+      void qc.invalidateQueries({ queryKey: ["messages", id] });
+      if (me && conv.data?.created_by === me.id) void migrateConversationHistory(id, me.id);
     };
     window.addEventListener("conv-key-rotated", onRotated);
     return () => window.removeEventListener("conv-key-rotated", onRotated);
-  }, [id, qc]);
+  }, [id, qc, me, conv.data?.created_by]);
+
+  // Covers a rotation that happened while this member (the key owner) was
+  // offline: migrating on open repairs the history for everyone.
+  useEffect(() => {
+    if (!me || !conv.data || conv.data.created_by !== me.id) return;
+    void migrateConversationHistory(id, me.id);
+  }, [id, me, conv.data?.created_by]);
 
   // mark read + scroll to bottom
   useEffect(() => {

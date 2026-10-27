@@ -113,6 +113,27 @@
       "when": 1793090523356,
       "tag": "0015_report_status",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1793105952226,
+      "tag": "0016_member_reencrypt_message_bodies",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1793106880087,
+      "tag": "0017_conversation_key_generations",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1793107008045,
+      "tag": "0018_conversation_key_wrapper_pub",
+      "breakpoints": true
     }
   ]
 }

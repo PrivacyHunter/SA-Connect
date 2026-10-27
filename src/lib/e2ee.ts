@@ -44,26 +44,58 @@ function unpack(stored: string): { iv: Uint8Array<ArrayBuffer>; data: Uint8Array
 const subtle = () => crypto.subtle;
 const ECDH = { name: "ECDH", namedCurve: "P-256" } as const;
 
-/** Ensures the signed-in user has an E2EE key pair and uploads the public key to their profile. */
-export async function ensureMyKeys(userId: string): Promise<void> {
-  try {
-    let stored = localStorage.getItem(privStore(userId));
-    if (!stored) {
-      const pair = await subtle().generateKey(ECDH, true, ["deriveKey"]);
-      const privJwk = await subtle().exportKey("jwk", pair.privateKey);
-      stored = JSON.stringify(privJwk);
-      localStorage.setItem(privStore(userId), stored);
+/**
+ * Ensures the signed-in user has an E2EE key pair and uploads the public key
+ * to their profile. Concurrent callers share one run: two parallel runs on an
+ * empty browser would each generate a key pair and the second would overwrite
+ * the first's private key while the profile kept the first's public key —
+ * every pairwise unwrap would then fail. The re-check loop also repairs a
+ * private key that another open tab overwrote mid-run.
+ */
+const ensureInflight = new Map<string, Promise<void>>();
+export function ensureMyKeys(userId: string): Promise<void> {
+  const existing = ensureInflight.get(userId);
+  if (existing) return existing;
+  const p = (async () => {
+    try {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        let stored = localStorage.getItem(privStore(userId));
+        if (!stored) {
+          const pair = await subtle().generateKey(ECDH, true, ["deriveKey"]);
+          localStorage.setItem(privStore(userId), JSON.stringify(await subtle().exportKey("jwk", pair.privateKey)));
+          stored = localStorage.getItem(privStore(userId));
+        }
+        const jwk = JSON.parse(stored!) as JsonWebKey;
+        console.debug("[e2ee] my priv pub-x", jwk.x?.slice(0, 8), "user", userId.slice(0, 8));
+        const pubJwk = JSON.stringify({ kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y, ext: true });
+        const { data } = await supabase.from("profiles").select("public_key").eq("id", userId).maybeSingle();
+        if (data && data.public_key !== pubJwk) {
+          await supabase.from("profiles").update({ public_key: pubJwk }).eq("id", userId);
+        }
+        // Another tab may have replaced the private key while we uploaded the
+        // matching public key — converge on whatever is stored now.
+        if (localStorage.getItem(privStore(userId)) === stored) return;
+      }
+    } catch {
+      // E2EE unavailable; messages fall back to plaintext transport
     }
-    const jwk = JSON.parse(stored) as JsonWebKey;
-    const publicJwk = { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y, ext: true };
-    const pubJwk = JSON.stringify(publicJwk);
-    const { data } = await supabase.from("profiles").select("public_key").eq("id", userId).maybeSingle();
-    if (data && data.public_key !== pubJwk) {
-      await supabase.from("profiles").update({ public_key: pubJwk }).eq("id", userId);
-    }
-  } catch {
-    // E2EE unavailable; messages fall back to plaintext transport
+  })();
+  ensureInflight.set(userId, p);
+  p.catch(() => ensureInflight.delete(userId));
+  return p;
+}
+
+// Key derivation must never run against a stale profile public key (e.g. the
+// wrap created before this browser uploaded its current key), so every
+// derive/encrypt/decrypt path awaits this memoized promise first.
+const ensureMemo = new Map<string, Promise<void>>();
+function ensureMyKeysOnce(userId: string): Promise<void> {
+  let p = ensureMemo.get(userId);
+  if (!p) {
+    p = ensureMyKeys(userId).catch(() => undefined);
+    ensureMemo.set(userId, p);
   }
+  return p;
 }
 
 const privCache = new Map<string, Promise<CryptoKey>>();
@@ -82,9 +114,21 @@ function myPrivateKey(userId: string): Promise<CryptoKey> {
   return p;
 }
 
+/** The public JWK matching the stored private key, or null when unavailable. */
+function myPublicJwk(userId: string): JsonWebKey | null {
+  try {
+    const jwk = JSON.parse(localStorage.getItem(privStore(userId))!) as JsonWebKey;
+    const pub: JsonWebKey = { kty: jwk.kty!, crv: jwk.crv!, x: jwk.x!, y: jwk.y!, ext: true };
+    return pub;
+  } catch {
+    return null;
+  }
+}
+
 const pairCache = new Map<string, Promise<CryptoKey>>();
 async function pairKey(userId: string, peerJwk: JsonWebKey): Promise<CryptoKey> {
   const cacheKey = `${userId}:${peerJwk.x}:${peerJwk.y}`;
+  console.debug("[e2ee] pairKey me", userId.slice(0, 8), "peer-x", peerJwk.x?.slice(0, 8));
   let p = pairCache.get(cacheKey);
   if (!p) {
     const pub = await subtle().importKey("jwk", peerJwk, ECDH, false, []);
@@ -135,15 +179,17 @@ function broadcastRotation(conversationId: string) {
 }
 
 async function memberPublicKeys(conversationId: string): Promise<Map<string, JsonWebKey | null>> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("conversation_members")
     .select("user_id, profiles(public_key)")
     .eq("conversation_id", conversationId);
+  if (error) console.debug("[e2ee] members query error", error.message);
   const map = new Map<string, JsonWebKey | null>();
   for (const row of (data ?? []) as { user_id: string; profiles: { public_key: string | null } | null }[]) {
     const raw = row.profiles?.public_key ?? null;
     map.set(row.user_id, raw ? (JSON.parse(raw) as JsonWebKey) : null);
   }
+  console.debug("[e2ee] members for", conversationId.slice(0, 8), [...map.entries()].map(([u, k]) => `${u.slice(0, 8)}:${k ? k.x?.slice(0, 6) : "null"}`).join(" "));
   return map;
 }
 
@@ -158,7 +204,8 @@ async function unwrapKey(
     const pk = await pairKey(userId, peerJwk);
     const raw = await subtle().decrypt({ name: "AES-GCM", iv: packed.iv }, pk, packed.data);
     return await subtle().importKey("raw", raw, { name: "AES-GCM" }, true, ["encrypt", "decrypt"]);
-  } catch {
+  } catch (err) {
+    console.debug("[e2ee] unwrap error", (err as Error)?.name, (err as Error)?.message);
     return null;
   }
 }
@@ -168,20 +215,25 @@ export async function getConversationKey(conversationId: string, meId: string): 
   const cached = convKeyCache.get(conversationId);
   if (cached) return cached;
   const promise = (async () => {
+    await ensureMyKeysOnce(meId);
     const members = await memberPublicKeys(conversationId);
-    if (!members.has(meId)) return null; // not a member of this conversation
+    if (!members.has(meId)) {
+      console.debug("[e2ee] not a member of", conversationId.slice(0, 8), "as", meId.slice(0, 8));
+      return null; // not a member of this conversation
+    }
     const { data: conv } = await supabase
       .from("conversations")
       .select("created_by")
       .eq("id", conversationId)
       .maybeSingle();
     const creatorId = (conv as { created_by: string | null } | null)?.created_by ?? meId;
+    console.debug("[e2ee] derive conv", conversationId.slice(0, 8), "me", meId.slice(0, 8), "creator", creatorId.slice(0, 8));
 
     const fetchRows = async () =>
       (
         await supabase
           .from("conversation_keys")
-          .select("wrapped_by, wrapped_key, created_at")
+          .select("wrapped_by, wrapped_key, wrapper_public_key, created_at")
           .eq("conversation_id", conversationId)
           .eq("user_id", meId)
           .order("created_at", { ascending: false })
@@ -193,38 +245,63 @@ export async function getConversationKey(conversationId: string, meId: string): 
     for (let i = 0; i < attempts; i++) {
       if (i > 0) await new Promise((r) => setTimeout(r, 900));
       const rows = await fetchRows();
+      console.debug("[e2ee] attempt", i, "rows", (rows ?? []).length, "for", meId.slice(0, 8));
       // Newest wrap first: after a key rotation everyone converges on the latest key.
-      for (const row of (rows ?? []) as { wrapped_by: string; wrapped_key: string }[]) {
-        const peer = members.get(row.wrapped_by);
+      for (const row of (rows ?? []) as { wrapped_by: string; wrapped_key: string; wrapper_public_key: string | null }[]) {
+        // The wrap was created with the wrapper's key pair AT WRAP TIME —
+        // stored on the row, because the wrapper may have since signed in on
+        // a new device and replaced their profile public key.
+        const peer = row.wrapper_public_key
+          ? (JSON.parse(row.wrapper_public_key) as JsonWebKey)
+          : members.get(row.wrapped_by);
         if (peer) {
           const key = await unwrapKey(meId, peer, row.wrapped_key);
+          console.debug("[e2ee] unwrap from", row.wrapped_by.slice(0, 8), key ? "OK" : "FAIL");
           if (key) return key;
+        } else {
+          console.debug("[e2ee] no peer key for wrapper", row.wrapped_by.slice(0, 8));
         }
       }
     }
     // No row could be unwrapped (e.g. the member's browser keys changed):
     // rotate — create a fresh conversation key and re-wrap it for everyone.
+    console.debug("[e2ee] rotate fallback for", meId.slice(0, 8));
     const raw = crypto.getRandomValues(new Uint8Array(32));
     const key = await subtle().importKey("raw", raw, { name: "AES-GCM" }, true, ["encrypt", "decrypt"]);
-    const inserts: { conversation_id: string; user_id: string; wrapped_by: string; wrapped_key: string }[] = [];
+    const myPub = myPublicJwk(meId);
+    const inserts: { conversation_id: string; user_id: string; wrapped_by: string; wrapped_key: string; wrapper_public_key: string | null }[] = [];
     for (const [uid, peer] of members) {
       if (!peer) continue;
       try {
         const pk = await pairKey(meId, peer);
         const iv = crypto.getRandomValues(new Uint8Array(12));
         const ct = await subtle().encrypt({ name: "AES-GCM", iv }, pk, raw);
-        inserts.push({ conversation_id: conversationId, user_id: uid, wrapped_by: meId, wrapped_key: pack(iv, ct) });
+        inserts.push({ conversation_id: conversationId, user_id: uid, wrapped_by: meId, wrapped_key: pack(iv, ct), wrapper_public_key: myPub ? JSON.stringify(myPub) : null });
       } catch {
         // member has no usable key yet
       }
     }
+    console.debug("[e2ee] rotation inserts", inserts.length, "targets", inserts.map((r) => r.user_id.slice(0, 8)).join(","));
     if (inserts.length) {
-      await supabase
+      // Insert, never upsert on (conversation_id, user_id, wrapped_by): a
+      // member rotating twice would otherwise overwrite their previous
+      // generation's wrap — the very row history migration needs to unwrap
+      // older messages. Each rotation appends a new generation instead.
+      const { error } = await supabase
         .from("conversation_keys")
-        .upsert(inserts, { onConflict: "conversation_id,user_id,wrapped_by" });
+        .insert(inserts);
+      if (error) {
+        // Never keep a key that nobody else can obtain — future messages
+        // encrypted with it would be unreadable for every other member.
+        console.debug("[e2ee] rotation insert error", error.message);
+        convKeyCache.delete(conversationId);
+        return null;
+      }
       broadcastRotation(conversationId);
+      return key;
     }
-    return key;
+    convKeyCache.delete(conversationId);
+    return null;
   })();
   convKeyCache.set(conversationId, promise);
   promise.catch(() => convKeyCache.delete(conversationId));
@@ -270,5 +347,72 @@ export async function decryptStoredText(
   } catch {
     convKeyCache.delete(conversationId); // re-derive on the next attempt
     return null;
+  }
+}
+
+/**
+ * Re-encrypts history that was encrypted with an older conversation key into
+ * the current one, so a member who rotated (e.g. signed in on a new device
+ * and lost the old private key) can read the older messages again. Only a
+ * member who can unwrap an older generation — typically the conversation
+ * creator — can do this. Returns the number of migrated messages.
+ */
+export async function migrateConversationHistory(conversationId: string, meId: string): Promise<number> {
+  try {
+    const currentKey = await getConversationKey(conversationId, meId);
+    if (!currentKey) return 0;
+    const currentRaw = toB64(await subtle().exportKey("raw", currentKey));
+
+    const members = await memberPublicKeys(conversationId);
+    const { data: keyRows } = await supabase
+      .from("conversation_keys")
+      .select("wrapped_by, wrapped_key, wrapper_public_key")
+      .eq("conversation_id", conversationId)
+      .eq("user_id", meId);
+    // Older generations only: every key that is not the current one.
+    const candidates = new Map<string, CryptoKey>();
+    for (const row of (keyRows ?? []) as { wrapped_by: string; wrapped_key: string; wrapper_public_key: string | null }[]) {
+      // Prefer the wrapper's at-wrap-time public key stored on the row; the
+      // wrapper may have since rotated their browser key pair.
+      const peer = row.wrapper_public_key
+        ? (JSON.parse(row.wrapper_public_key) as JsonWebKey)
+        : members.get(row.wrapped_by);
+      if (!peer) continue;
+      const k = await unwrapKey(meId, peer, row.wrapped_key);
+      if (!k) continue;
+      const raw = toB64(await subtle().exportKey("raw", k));
+      if (raw !== currentRaw) candidates.set(raw, k);
+    }
+    if (!candidates.size) return 0;
+
+    const { data: msgs } = await supabase
+      .from("messages")
+      .select("id, body")
+      .eq("conversation_id", conversationId)
+      .like("body", "enc:%")
+      .limit(300);
+    let migrated = 0;
+    for (const m of (msgs ?? []) as { id: string; body: string }[]) {
+      const packed = unpack(m.body);
+      if (!packed) continue;
+      for (const k of candidates.values()) {
+        try {
+          const plain = await subtle().decrypt({ name: "AES-GCM", iv: packed.iv }, k, packed.data);
+          const iv = crypto.getRandomValues(new Uint8Array(12));
+          const ct = await subtle().encrypt({ name: "AES-GCM", iv }, currentKey, plain);
+          const { error } = await supabase.from("messages").update({ body: pack(iv, ct) }).eq("id", m.id);
+          if (!error) migrated++;
+          break;
+        } catch {
+          // try the next older key
+        }
+      }
+    }
+    // Tell everyone a history migration happened so open pages re-decrypt.
+    if (migrated > 0) broadcastRotation(conversationId);
+    console.debug("[e2ee] history migrated", migrated, "messages in", conversationId.slice(0, 8));
+    return migrated;
+  } catch {
+    return 0;
   }
 }
