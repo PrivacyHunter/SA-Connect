@@ -1,0 +1,1 @@
+CREATE POLICY premium_unblock ON public.user_blocks AS RESTRICTIVE FOR DELETE TO authenticated USING(EXISTS(SELECT 1 FROM public.premium_access p WHERE p.user_id=auth.uid() AND p.premium_until>now()));
