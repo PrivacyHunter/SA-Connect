@@ -365,13 +365,17 @@ export async function migrateConversationHistory(conversationId: string, meId: s
     const members = await memberPublicKeys(conversationId);
     const { data: keyRows } = await supabase
       .from("conversation_keys")
-      .select("wrapped_by, wrapped_key")
+      .select("wrapped_by, wrapped_key, wrapper_public_key")
       .eq("conversation_id", conversationId)
       .eq("user_id", meId);
     // Older generations only: every key that is not the current one.
     const candidates = new Map<string, CryptoKey>();
-    for (const row of (keyRows ?? []) as { wrapped_by: string; wrapped_key: string }[]) {
-      const peer = members.get(row.wrapped_by);
+    for (const row of (keyRows ?? []) as { wrapped_by: string; wrapped_key: string; wrapper_public_key: string | null }[]) {
+      // Prefer the wrapper's at-wrap-time public key stored on the row; the
+      // wrapper may have since rotated their browser key pair.
+      const peer = row.wrapper_public_key
+        ? (JSON.parse(row.wrapper_public_key) as JsonWebKey)
+        : members.get(row.wrapped_by);
       if (!peer) continue;
       const k = await unwrapKey(meId, peer, row.wrapped_key);
       if (!k) continue;
