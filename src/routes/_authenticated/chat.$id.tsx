@@ -629,7 +629,7 @@ function MessageBubble({
           <DropdownMenuItem onClick={() => onDeleteForMe(message.id)}>
             <Trash2 className="h-4 w-4" /> Delete for me
           </DropdownMenuItem>
-          {mine && (
+          {mine && !message.deleted_for_everyone && (
             <DropdownMenuItem
               className="text-destructive focus:text-destructive"
               onClick={() => onDeleteForEveryone(message.id)}
