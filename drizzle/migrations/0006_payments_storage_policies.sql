@@ -1,0 +1,2 @@
+CREATE POLICY "payments upload own folder" ON storage.objects FOR INSERT TO authenticated WITH CHECK (bucket_id = 'payments' AND (storage.foldername(name))[1] = auth.uid()::text);
+CREATE POLICY "payments read own or staff" ON storage.objects FOR SELECT TO authenticated USING (bucket_id = 'payments' AND ((storage.foldername(name))[1] = auth.uid()::text OR public.is_staff(auth.uid())));
