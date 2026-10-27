@@ -248,10 +248,18 @@ export async function getConversationKey(conversationId: string, meId: string): 
       const { error } = await supabase
         .from("conversation_keys")
         .upsert(inserts, { onConflict: "conversation_id,user_id,wrapped_by" });
-      if (error) console.debug("[e2ee] rotation upsert error", error.message);
+      if (error) {
+        // Never keep a key that nobody else can obtain — future messages
+        // encrypted with it would be unreadable for every other member.
+        console.debug("[e2ee] rotation upsert error", error.message);
+        convKeyCache.delete(conversationId);
+        return null;
+      }
       broadcastRotation(conversationId);
+      return key;
     }
-    return key;
+    convKeyCache.delete(conversationId);
+    return null;
   })();
   convKeyCache.set(conversationId, promise);
   promise.catch(() => convKeyCache.delete(conversationId));
