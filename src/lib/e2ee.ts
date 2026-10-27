@@ -189,6 +189,7 @@ export async function getConversationKey(conversationId: string, meId: string): 
       await supabase
         .from("conversation_keys")
         .upsert(inserts, { onConflict: "conversation_id,user_id,wrapped_by" });
+      broadcastRotation(conversationId);
     }
     return key;
   })();
@@ -214,16 +215,27 @@ export async function decryptStoredText(
 ): Promise<string | null> {
   if (!stored || !stored.startsWith(PREFIX)) return stored;
   const packed = unpack(stored);
+  if (!packed) return null;
   const key = await getConversationKey(conversationId, meId);
-  if (!packed || !key) {
-    convKeyCache.delete(conversationId); // re-derive on the next attempt (e.g. after a rotation)
-    return null;
+  if (key) {
+    try {
+      return new TextDecoder().decode(
+        await subtle().decrypt({ name: "AES-GCM", iv: packed.iv }, key, packed.data),
+      );
+    } catch {
+      // fall through to the retry below
+    }
   }
+  // The cached key is stale (e.g. a peer rotated on a new device): re-derive
+  // once and retry before giving up.
+  convKeyCache.delete(conversationId);
+  const retryKey = await getConversationKey(conversationId, meId);
+  if (!retryKey) return null;
   try {
-    const plain = await subtle().decrypt({ name: "AES-GCM", iv: packed.iv }, key, packed.data);
+    const plain = await subtle().decrypt({ name: "AES-GCM", iv: packed.iv }, retryKey, packed.data);
     return new TextDecoder().decode(plain);
   } catch {
-    convKeyCache.delete(conversationId);
+    convKeyCache.delete(conversationId); // re-derive on the next attempt
     return null;
   }
 }
