@@ -307,3 +307,66 @@ export async function decryptStoredText(
     return null;
   }
 }
+
+/**
+ * Re-encrypts history that was encrypted with an older conversation key into
+ * the current one, so a member who rotated (e.g. signed in on a new device
+ * and lost the old private key) can read the older messages again. Only a
+ * member who can unwrap an older generation — typically the conversation
+ * creator — can do this. Returns the number of migrated messages.
+ */
+export async function migrateConversationHistory(conversationId: string, meId: string): Promise<number> {
+  try {
+    const currentKey = await getConversationKey(conversationId, meId);
+    if (!currentKey) return 0;
+    const currentRaw = toB64(await subtle().exportKey("raw", currentKey));
+
+    const members = await memberPublicKeys(conversationId);
+    const { data: keyRows } = await supabase
+      .from("conversation_keys")
+      .select("wrapped_by, wrapped_key")
+      .eq("conversation_id", conversationId)
+      .eq("user_id", meId);
+    // Older generations only: every key that is not the current one.
+    const candidates = new Map<string, CryptoKey>();
+    for (const row of (keyRows ?? []) as { wrapped_by: string; wrapped_key: string }[]) {
+      const peer = members.get(row.wrapped_by);
+      if (!peer) continue;
+      const k = await unwrapKey(meId, peer, row.wrapped_key);
+      if (!k) continue;
+      const raw = toB64(await subtle().exportKey("raw", k));
+      if (raw !== currentRaw) candidates.set(raw, k);
+    }
+    if (!candidates.size) return 0;
+
+    const { data: msgs } = await supabase
+      .from("messages")
+      .select("id, body")
+      .eq("conversation_id", conversationId)
+      .like("body", "enc:%")
+      .limit(300);
+    let migrated = 0;
+    for (const m of (msgs ?? []) as { id: string; body: string }[]) {
+      const packed = unpack(m.body);
+      if (!packed) continue;
+      for (const k of candidates.values()) {
+        try {
+          const plain = await subtle().decrypt({ name: "AES-GCM", iv: packed.iv }, k, packed.data);
+          const iv = crypto.getRandomValues(new Uint8Array(12));
+          const ct = await subtle().encrypt({ name: "AES-GCM", iv }, currentKey, plain);
+          const { error } = await supabase.from("messages").update({ body: pack(iv, ct) }).eq("id", m.id);
+          if (!error) migrated++;
+          break;
+        } catch {
+          // try the next older key
+        }
+      }
+    }
+    // Tell everyone a history migration happened so open pages re-decrypt.
+    if (migrated > 0) broadcastRotation(conversationId);
+    console.debug("[e2ee] history migrated", migrated, "messages in", conversationId.slice(0, 8));
+    return migrated;
+  } catch {
+    return 0;
+  }
+}
