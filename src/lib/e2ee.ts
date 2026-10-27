@@ -170,18 +170,36 @@ export async function getConversationKey(conversationId: string, meId: string): 
   const promise = (async () => {
     const members = await memberPublicKeys(conversationId);
     if (!members.has(meId)) return null; // not a member of this conversation
-    const { data: rows } = await supabase
-      .from("conversation_keys")
-      .select("wrapped_by, wrapped_key, created_at")
-      .eq("conversation_id", conversationId)
-      .eq("user_id", meId)
-      .order("created_at", { ascending: false });
-    // Newest wrap first: after a key rotation everyone converges on the latest key.
-    for (const row of (rows ?? []) as { wrapped_by: string; wrapped_key: string }[]) {
-      const peer = members.get(row.wrapped_by);
-      if (peer) {
-        const key = await unwrapKey(meId, peer, row.wrapped_key);
-        if (key) return key;
+    const { data: conv } = await supabase
+      .from("conversations")
+      .select("created_by")
+      .eq("id", conversationId)
+      .maybeSingle();
+    const creatorId = (conv as { created_by: string | null } | null)?.created_by ?? meId;
+
+    const fetchRows = async () =>
+      (
+        await supabase
+          .from("conversation_keys")
+          .select("wrapped_by, wrapped_key, created_at")
+          .eq("conversation_id", conversationId)
+          .eq("user_id", meId)
+          .order("created_at", { ascending: false })
+      ).data;
+
+    // Only the conversation creator creates the initial key; other members
+    // wait for the creator's wrap instead of racing to rotate their own.
+    const attempts = creatorId === meId ? 1 : 5;
+    for (let i = 0; i < attempts; i++) {
+      if (i > 0) await new Promise((r) => setTimeout(r, 900));
+      const rows = await fetchRows();
+      // Newest wrap first: after a key rotation everyone converges on the latest key.
+      for (const row of (rows ?? []) as { wrapped_by: string; wrapped_key: string }[]) {
+        const peer = members.get(row.wrapped_by);
+        if (peer) {
+          const key = await unwrapKey(meId, peer, row.wrapped_key);
+          if (key) return key;
+        }
       }
     }
     // No row could be unwrapped (e.g. the member's browser keys changed):
