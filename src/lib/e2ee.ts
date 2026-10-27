@@ -1,3 +1,4 @@
+import type { RealtimeChannel } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 
 /**
@@ -95,6 +96,44 @@ async function pairKey(userId: string, peerJwk: JsonWebKey): Promise<CryptoKey> 
 
 const convKeyCache = new Map<string, Promise<CryptoKey | null>>();
 
+// Live convergence: when a member rotates the conversation key (e.g. after
+// signing in on a new device), every other open page re-derives immediately
+// instead of staying on the stale cached key until a reload.
+const keysyncChannels = new Map<string, RealtimeChannel>();
+function keysyncChannel(conversationId: string): RealtimeChannel {
+  let ch = keysyncChannels.get(conversationId);
+  if (!ch) {
+    ch = supabase
+      .channel(`keysync-${conversationId}`)
+      .on("broadcast", { event: "rotated" }, () => {
+        convKeyCache.delete(conversationId);
+        window.dispatchEvent(new CustomEvent("conv-key-rotated", { detail: { conversationId } }));
+      })
+      .subscribe();
+    keysyncChannels.set(conversationId, ch);
+  }
+  return ch;
+}
+
+function broadcastRotation(conversationId: string) {
+  const ch = keysyncChannel(conversationId);
+  const send = () => void ch.send({ type: "broadcast", event: "rotated" });
+  if (ch.state === "joined") {
+    send();
+    return;
+  }
+  // The channel is still subscribing — deliver as soon as it joins.
+  const started = Date.now();
+  const timer = setInterval(() => {
+    if (ch.state === "joined") {
+      clearInterval(timer);
+      send();
+    } else if (Date.now() - started > 15000) {
+      clearInterval(timer);
+    }
+  }, 250);
+}
+
 async function memberPublicKeys(conversationId: string): Promise<Map<string, JsonWebKey | null>> {
   const { data } = await supabase
     .from("conversation_members")
@@ -131,18 +170,36 @@ export async function getConversationKey(conversationId: string, meId: string): 
   const promise = (async () => {
     const members = await memberPublicKeys(conversationId);
     if (!members.has(meId)) return null; // not a member of this conversation
-    const { data: rows } = await supabase
-      .from("conversation_keys")
-      .select("wrapped_by, wrapped_key, created_at")
-      .eq("conversation_id", conversationId)
-      .eq("user_id", meId)
-      .order("created_at", { ascending: false });
-    // Newest wrap first: after a key rotation everyone converges on the latest key.
-    for (const row of (rows ?? []) as { wrapped_by: string; wrapped_key: string }[]) {
-      const peer = members.get(row.wrapped_by);
-      if (peer) {
-        const key = await unwrapKey(meId, peer, row.wrapped_key);
-        if (key) return key;
+    const { data: conv } = await supabase
+      .from("conversations")
+      .select("created_by")
+      .eq("id", conversationId)
+      .maybeSingle();
+    const creatorId = (conv as { created_by: string | null } | null)?.created_by ?? meId;
+
+    const fetchRows = async () =>
+      (
+        await supabase
+          .from("conversation_keys")
+          .select("wrapped_by, wrapped_key, created_at")
+          .eq("conversation_id", conversationId)
+          .eq("user_id", meId)
+          .order("created_at", { ascending: false })
+      ).data;
+
+    // Only the conversation creator creates the initial key; other members
+    // wait for the creator's wrap instead of racing to rotate their own.
+    const attempts = creatorId === meId ? 1 : 5;
+    for (let i = 0; i < attempts; i++) {
+      if (i > 0) await new Promise((r) => setTimeout(r, 900));
+      const rows = await fetchRows();
+      // Newest wrap first: after a key rotation everyone converges on the latest key.
+      for (const row of (rows ?? []) as { wrapped_by: string; wrapped_key: string }[]) {
+        const peer = members.get(row.wrapped_by);
+        if (peer) {
+          const key = await unwrapKey(meId, peer, row.wrapped_key);
+          if (key) return key;
+        }
       }
     }
     // No row could be unwrapped (e.g. the member's browser keys changed):
@@ -165,6 +222,7 @@ export async function getConversationKey(conversationId: string, meId: string): 
       await supabase
         .from("conversation_keys")
         .upsert(inserts, { onConflict: "conversation_id,user_id,wrapped_by" });
+      broadcastRotation(conversationId);
     }
     return key;
   })();
@@ -190,16 +248,27 @@ export async function decryptStoredText(
 ): Promise<string | null> {
   if (!stored || !stored.startsWith(PREFIX)) return stored;
   const packed = unpack(stored);
+  if (!packed) return null;
   const key = await getConversationKey(conversationId, meId);
-  if (!packed || !key) {
-    convKeyCache.delete(conversationId); // re-derive on the next attempt (e.g. after a rotation)
-    return null;
+  if (key) {
+    try {
+      return new TextDecoder().decode(
+        await subtle().decrypt({ name: "AES-GCM", iv: packed.iv }, key, packed.data),
+      );
+    } catch {
+      // fall through to the retry below
+    }
   }
+  // The cached key is stale (e.g. a peer rotated on a new device): re-derive
+  // once and retry before giving up.
+  convKeyCache.delete(conversationId);
+  const retryKey = await getConversationKey(conversationId, meId);
+  if (!retryKey) return null;
   try {
-    const plain = await subtle().decrypt({ name: "AES-GCM", iv: packed.iv }, key, packed.data);
+    const plain = await subtle().decrypt({ name: "AES-GCM", iv: packed.iv }, retryKey, packed.data);
     return new TextDecoder().decode(plain);
   } catch {
-    convKeyCache.delete(conversationId);
+    convKeyCache.delete(conversationId); // re-derive on the next attempt
     return null;
   }
 }
