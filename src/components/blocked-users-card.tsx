@@ -26,7 +26,7 @@ export function BlockedUsersCard({ meId }: { meId: string }) {
   async function unblock(id: string) {
     if (!isPremium) { navigate({ to: "/premium" }); return; }
     const { error } = await supabase.from("user_blocks").delete().eq("blocker_id", meId).eq("blocked_id", id);
-    if (error) return toast.error("Could not unblock");
+    if (error) { toast.error("Could not unblock"); return; }
     toast.success("Unblocked");
     qc.invalidateQueries({ queryKey: ["blocked-users", meId] });
     qc.invalidateQueries();
