@@ -21,7 +21,16 @@ export function OnlineProvider({ userId, children }: { userId: string | null; ch
           await channel.track({ online_at: new Date().toISOString() });
         }
       });
+    // Last seen: refresh while active and when the tab is hidden/closed.
+    const touch = () => void supabase.rpc("touch_last_seen");
+    touch();
+    const beat = setInterval(touch, 60_000);
+    const onVis = () => document.visibilityState === "hidden" && touch();
+    document.addEventListener("visibilitychange", onVis);
     return () => {
+      clearInterval(beat);
+      document.removeEventListener("visibilitychange", onVis);
+      touch();
       supabase.removeChannel(channel);
     };
   }, [userId]);

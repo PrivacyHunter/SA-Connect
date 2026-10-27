@@ -43,7 +43,53 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { UserAvatar } from "@/components/user-avatar";
 import { CallOverlay, useCall } from "@/components/call-overlay";
-import { Phone, Video } from "lucide-react";
+import { Ban, Eraser, Flag, Phone, ShieldAlert, Video } from "lucide-react";
+import { useIsOnline } from "@/lib/presence";
+import { useChatActivity } from "@/hooks/use-chat-activity";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+
+function lastSeen(iso: string): string {
+  const t = timeAgo(iso);
+  return t === "just now" || /\d{1,2} \w|\w{3} \d/.test(t) ? t : `${t} ago`;
+}
+
+function TypingDots() {
+  return (
+    <span className="inline-flex items-end gap-0.5" aria-hidden>
+      {[0, 150, 300].map((d) => (
+        <span key={d} className="h-1.5 w-1.5 animate-bounce rounded-full bg-current" style={{ animationDelay: `${d}ms` }} />
+      ))}
+    </span>
+  );
+}
+
+function RecordingBars() {
+  return (
+    <span className="inline-flex h-3 items-center gap-0.5" aria-hidden>
+      {[0, 120, 240, 360].map((d) => (
+        <span key={d} className="h-full w-0.5 animate-pulse rounded-full bg-current" style={{ animationDelay: `${d}ms`, animationDuration: "0.7s" }} />
+      ))}
+    </span>
+  );
+}
 
 export const Route = createFileRoute("/_authenticated/chat/$id")({
   head: () => ({
@@ -66,6 +112,9 @@ function ConversationPage() {
   const { data: me } = useCurrentProfile();
   const { premium } = usePremium(me?.id);
   const [text, setText] = useState("");
+  const [confirm, setConfirm] = useState<"clear" | "block" | null>(null);
+  const [reportMode, setReportMode] = useState<"report" | "block" | null>(null);
+  const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [recording, setRecording] = useState(false);
   const [oneView, setOneView] = useState(false);
@@ -208,6 +257,31 @@ function ConversationPage() {
   const title = isDm ? other?.profiles.display_name : conv.data?.name;
   const isChannel = conv.data?.type === "channel";
   const canPost = !isChannel || conv.data?.created_by === me?.id;
+  const otherId = isDm ? other?.user_id : undefined;
+  const otherOnline = useIsOnline(otherId);
+
+  const blockState = useQuery({
+    queryKey: ["block", id, otherId],
+    enabled: !!me && !!otherId,
+    queryFn: async () => {
+      const [{ data: mine }, { data: any }] = await Promise.all([
+        supabase.from("user_blocks").select("blocked_id").eq("blocker_id", me!.id).eq("blocked_id", otherId!).maybeSingle(),
+        supabase.rpc("chat_is_blocked", { p_conversation: id }),
+      ]);
+      return { iBlocked: !!mine, blocked: !!any };
+    },
+  });
+  const iBlocked = !!blockState.data?.iBlocked;
+  const chatBlocked = !!blockState.data?.blocked;
+  const { others: activity, setActivity } = useChatActivity(id, me?.id, !chatBlocked);
+  const activeEntries = Object.entries(activity);
+  const activityKind = activeEntries.some(([, a]) => a === "recording") ? "recording" : activeEntries.length ? "typing" : null;
+  const activityNames = activeEntries
+    .filter(([, a]) => a === activityKind)
+    .map(([uid]) => members.find((m) => m.user_id === uid)?.profiles.display_name ?? "Someone");
+  const activityLabel = !activityKind
+    ? null
+    : `${isDm ? "" : activityNames.join(", ") + " "}${activityKind === "recording" ? "recording voice…" : "typing…"}`.trim();
 
   async function send(kind: Message["kind"], body: string | null, mediaUrl: string | null, fileName: string | null, duration: number | null, oneViewFlag = oneView) {
     if (!me) return;
@@ -245,6 +319,7 @@ function ConversationPage() {
     const t = text.trim();
     if (!t) return;
     setText("");
+    setActivity("idle");
     await send("text", t, null, null, null);
   }
 
@@ -290,6 +365,7 @@ function ConversationPage() {
       rec.onstop = async () => {
         stream.getTracks().forEach((t) => t.stop());
         setRecording(false);
+        setActivity("idle");
         const blob = new Blob(chunksRef.current, { type: rec.mimeType || "audio/webm" });
         const duration = Math.max(1, Math.round((Date.now() - recordStartRef.current) / 1000));
         const file = new File([blob], `voice-${Date.now()}.webm`, { type: blob.type });
@@ -305,6 +381,7 @@ function ConversationPage() {
       };
       rec.start();
       setRecording(true);
+      setActivity("recording");
     } catch {
       toast.error("Microphone permission needed for voice notes");
     }
@@ -392,6 +469,45 @@ function ConversationPage() {
 
   const lastMessage = messages.data?.[messages.data.length - 1];
 
+  async function clearChat() {
+    const { error } = await supabase.rpc("clear_chat", { p_conversation: id });
+    setConfirm(null);
+    if (error) return void toast.error(error.message);
+    qc.setQueryData<Message[]>(["messages", id], []);
+    toast.success("Chat cleared from your side");
+  }
+
+  async function block() {
+    if (!me || !other) return;
+    const { error } = await supabase.from("user_blocks").insert({ blocker_id: me.id, blocked_id: other.user_id });
+    setConfirm(null);
+    if (error && error.code !== "23505") return void toast.error(error.message);
+    void qc.invalidateQueries({ queryKey: ["block", id] });
+    toast.success(`${other.profiles.display_name} blocked`);
+  }
+
+  async function unblock() {
+    if (!me || !other) return;
+    if (!premium) return void navigate({ to: "/premium" });
+    const { error } = await supabase.from("user_blocks").delete().eq("blocker_id", me.id).eq("blocked_id", other.user_id);
+    if (error) return void toast.error(error.message);
+    void qc.invalidateQueries({ queryKey: ["block", id] });
+    toast.success(`${other.profiles.display_name} unblocked`);
+  }
+
+  async function submitReport() {
+    if (!me || !other) return;
+    const { error } = await supabase
+      .from("user_reports")
+      .insert({ reporter_id: me.id, reported_id: other.user_id, conversation_id: id, reason: reason.trim() });
+    if (error) return void toast.error(error.message);
+    const alsoBlock = reportMode === "block";
+    setReportMode(null);
+    setReason("");
+    toast.success("Report sent — thank you");
+    if (alsoBlock) await block();
+  }
+
   return (
     <div className="mx-auto flex h-[calc(100dvh-3.5rem)] max-w-3xl flex-col lg:h-dvh">
       {/* header */}
@@ -414,13 +530,22 @@ function ConversationPage() {
         )}
         <div className="min-w-0 flex-1">
           <h2 className="truncate font-semibold">{title ?? "Loading…"}</h2>
-          <p className="truncate text-xs text-muted-foreground">
-            {myMember?.muted && <BellOff className="mr-1 inline h-3 w-3" />}
-            {isDm
-              ? other
-                ? `${members.length} member · ${timeAgo(other.profiles.created_at)} joined · encrypted`
-                : "encrypted"
-              : `${members.length} ${members.length === 1 ? "member" : "members"}${isChannel ? " · broadcast channel · encrypted" : " · group · encrypted"}`}
+          <p className={cn("flex items-center gap-1 truncate text-xs text-muted-foreground", (activityLabel || (isDm && otherOnline)) && "text-gold")}>
+            {myMember?.muted && <BellOff className="inline h-3 w-3" />}
+            {activityLabel ? (
+              <>
+                {activityKind === "recording" ? <RecordingBars /> : <TypingDots />}
+                {activityLabel}
+              </>
+            ) : isDm ? (
+              other ? (
+                chatBlocked ? "encrypted" : otherOnline ? "Online" : other.profiles.last_seen_at ? `Last seen ${lastSeen(other.profiles.last_seen_at)}` : "Offline"
+              ) : (
+                "encrypted"
+              )
+            ) : (
+              `${members.length} ${members.length === 1 ? "member" : "members"}${isChannel ? " · broadcast channel · encrypted" : " · group · encrypted"}`
+            )}
           </p>
         </div>
         <Button variant="ghost" size="icon" aria-label="Voice call" onClick={() => call.start(false)}>
@@ -445,6 +570,30 @@ function ConversationPage() {
               <DropdownMenuItem onClick={pinLast}>
                 <Pin className="h-4 w-4" /> Pin latest message
               </DropdownMenuItem>
+            )}
+            <DropdownMenuItem onClick={() => setConfirm("clear")}>
+              <Eraser className="h-4 w-4" /> Clear chat
+            </DropdownMenuItem>
+            {isDm && other && (
+              <>
+                {iBlocked ? (
+                  <DropdownMenuItem onClick={() => (premium ? unblock() : navigate({ to: "/premium" }))}>
+                    <Ban className="h-4 w-4" /> {premium ? "Unblock" : "Unblock (Premium)"}
+                  </DropdownMenuItem>
+                ) : (
+                  <DropdownMenuItem onClick={() => setConfirm("block")}>
+                    <Ban className="h-4 w-4" /> Block
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuItem onClick={() => setReportMode("report")}>
+                  <Flag className="h-4 w-4" /> Report
+                </DropdownMenuItem>
+                {!iBlocked && (
+                  <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setReportMode("block")}>
+                    <ShieldAlert className="h-4 w-4" /> Report and block
+                  </DropdownMenuItem>
+                )}
+              </>
             )}
             <DropdownMenuSeparator />
             <DropdownMenuItem
@@ -487,6 +636,12 @@ function ConversationPage() {
             onDeleteForEveryone={deleteForEveryone}
           />
         ))}
+        {activityLabel && (
+          <div className="flex w-fit items-center gap-2 rounded-2xl bg-secondary px-3 py-2 text-xs text-secondary-foreground">
+            {activityKind === "recording" ? <RecordingBars /> : <TypingDots />}
+            {activityLabel}
+          </div>
+        )}
         <div ref={bottomRef} />
       </div>
 
@@ -528,7 +683,26 @@ function ConversationPage() {
           </div>
         )}
         <div className="flex items-center gap-2">
-        {canPost ? (
+        {isDm && chatBlocked ? (
+          <div className="flex w-full flex-wrap items-center justify-center gap-2 py-2 text-center text-sm text-muted-foreground">
+            {iBlocked ? (
+              <>
+                <span>You blocked {other?.profiles.display_name}.</span>
+                {premium ? (
+                  <Button type="button" size="sm" variant="secondary" onClick={unblock}>
+                    Unblock
+                  </Button>
+                ) : (
+                  <Button type="button" size="sm" variant="secondary" onClick={() => navigate({ to: "/premium" })}>
+                    Unblock with Premium
+                  </Button>
+                )}
+              </>
+            ) : (
+              <span>You can’t send messages in this chat.</span>
+            )}
+          </div>
+        ) : canPost ? (
           <>
             <input type="file" accept="image/*,video/*" className="hidden" id={`img-${id}`} onChange={(e) => { const f = e.target.files?.[0]; if (f) pickFile(f); }} />
             <input type="file" className="hidden" id={`file-${id}`} onChange={(e) => { const f = e.target.files?.[0]; if (f) pickFile(f); }} />
@@ -550,7 +724,7 @@ function ConversationPage() {
               aria-label={recording ? "Stop recording" : "Record voice note"}
               className={cn(recording && "text-destructive")}
             >
-              {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : <Mic className="h-5 w-5" />}
+              {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : <Mic className={cn("h-5 w-5", recording && "animate-pulse")} />}
             </Button>
             <Button
               type="button"
@@ -564,11 +738,21 @@ function ConversationPage() {
             >
               <Eye className="h-5 w-5" />
             </Button>
-            <Input
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder={oneView ? "One-view message — type and send" : recording ? "Recording voice note…" : "Type a message"}
-            />
+            {recording ? (
+              <div className="flex h-10 flex-1 items-center gap-2 rounded-md border border-destructive/40 px-3 text-sm text-destructive">
+                <RecordingBars /> Recording voice note…
+              </div>
+            ) : (
+              <Input
+                value={text}
+                onChange={(e) => {
+                  setText(e.target.value);
+                  setActivity(e.target.value ? "typing" : "idle");
+                }}
+                onBlur={() => setActivity("idle")}
+                placeholder={oneView ? "One-view message — type and send" : "Type a message"}
+              />
+            )}
             <Button type="submit" size="icon" disabled={!text.trim()} aria-label="Send">
               <Send className="h-4 w-4" />
             </Button>
@@ -580,6 +764,43 @@ function ConversationPage() {
         )}
         </div>
       </form>
+
+      <AlertDialog open={confirm !== null} onOpenChange={(o) => !o && setConfirm(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{confirm === "clear" ? "Clear this chat?" : `Block ${other?.profiles.display_name ?? "this person"}?`}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirm === "clear"
+                ? "All messages in this chat will be removed from your side only. The other person still keeps their copy."
+                : premium
+                  ? "They won’t be able to message you here. You can unblock anytime."
+                  : "They won’t be able to message you here. Unblocking is a Premium feature."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => (confirm === "clear" ? clearChat() : block())}>
+              {confirm === "clear" ? "Clear chat" : "Block"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <Dialog open={reportMode !== null} onOpenChange={(o) => !o && setReportMode(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{reportMode === "block" ? "Report and block" : "Report"} {other?.profiles.display_name}</DialogTitle>
+            <DialogDescription>Tell us what happened. Our team reviews every report.</DialogDescription>
+          </DialogHeader>
+          <Textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason (spam, harassment, scam…)" maxLength={2000} />
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setReportMode(null)}>Cancel</Button>
+            <Button variant="destructive" disabled={reason.trim().length < 3} onClick={submitReport}>
+              {reportMode === "block" ? "Report & block" : "Send report"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

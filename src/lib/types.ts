@@ -7,6 +7,7 @@ export interface Profile {
   banner_url: string | null;
   created_at: string;
   referral_code?: string | null;
+  last_seen_at?: string | null;
 }
 
 export interface Notification {
