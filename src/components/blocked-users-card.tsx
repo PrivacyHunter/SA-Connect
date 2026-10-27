@@ -10,8 +10,7 @@ import { UserAvatar } from "@/components/user-avatar";
 export function BlockedUsersCard({ meId }: { meId: string }) {
   const qc = useQueryClient();
   const navigate = useNavigate();
-  const premium = usePremium();
-  const isPremium = !!premium.data?.active;
+  const { premium: isPremium } = usePremium(meId);
   const blocked = useQuery({
     queryKey: ["blocked-users", meId],
     queryFn: async () => {
@@ -30,7 +29,7 @@ export function BlockedUsersCard({ meId }: { meId: string }) {
     if (error) return toast.error("Could not unblock");
     toast.success("Unblocked");
     qc.invalidateQueries({ queryKey: ["blocked-users", meId] });
-    qc.invalidateQueries({ queryKey: ["block-state"] });
+    qc.invalidateQueries();
   }
 
   return (
@@ -43,7 +42,7 @@ export function BlockedUsersCard({ meId }: { meId: string }) {
           {blocked.data.map((b) => (
             <li key={b.id} className="flex items-center justify-between gap-3 py-2">
               <div className="flex min-w-0 items-center gap-3">
-                <UserAvatar profile={b.profile as never} />
+                <UserAvatar profile={b.profile ?? { id: b.id, display_name: "?", avatar_url: null }} />
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium">{b.profile?.display_name ?? "Unknown user"}</p>
                   {b.profile?.username && <p className="truncate text-xs text-muted-foreground">@{b.profile.username}</p>}
