@@ -257,7 +257,8 @@ export async function getConversationKey(conversationId: string, meId: string): 
     console.debug("[e2ee] rotate fallback for", meId.slice(0, 8));
     const raw = crypto.getRandomValues(new Uint8Array(32));
     const key = await subtle().importKey("raw", raw, { name: "AES-GCM" }, true, ["encrypt", "decrypt"]);
-    const inserts: { conversation_id: string; user_id: string; wrapped_by: string; wrapped_key: string }[] = [];
+    const myPub = myPublicJwk(meId);
+    const inserts: { conversation_id: string; user_id: string; wrapped_by: string; wrapped_key: string; wrapper_public_key: string | null }[] = [];
     for (const [uid, peer] of members) {
       if (!peer) continue;
       try {
