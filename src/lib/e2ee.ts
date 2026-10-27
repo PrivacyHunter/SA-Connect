@@ -114,6 +114,16 @@ function myPrivateKey(userId: string): Promise<CryptoKey> {
   return p;
 }
 
+/** The public JWK matching the stored private key, or null when unavailable. */
+function myPublicJwk(userId: string): JsonWebKey | null {
+  try {
+    const jwk = JSON.parse(localStorage.getItem(privStore(userId))!) as JsonWebKey;
+    return { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y, ext: true };
+  } catch {
+    return null;
+  }
+}
+
 const pairCache = new Map<string, Promise<CryptoKey>>();
 async function pairKey(userId: string, peerJwk: JsonWebKey): Promise<CryptoKey> {
   const cacheKey = `${userId}:${peerJwk.x}:${peerJwk.y}`;
@@ -265,7 +275,7 @@ export async function getConversationKey(conversationId: string, meId: string): 
         const pk = await pairKey(meId, peer);
         const iv = crypto.getRandomValues(new Uint8Array(12));
         const ct = await subtle().encrypt({ name: "AES-GCM", iv }, pk, raw);
-        inserts.push({ conversation_id: conversationId, user_id: uid, wrapped_by: meId, wrapped_key: pack(iv, ct) });
+        inserts.push({ conversation_id: conversationId, user_id: uid, wrapped_by: meId, wrapped_key: pack(iv, ct), wrapper_public_key: myPub ? JSON.stringify(myPub) : null });
       } catch {
         // member has no usable key yet
       }
