@@ -697,7 +697,7 @@ function MessageBubble({
                 <div className="h-40 w-56 animate-pulse rounded-xl bg-muted" />
               ))}
             {message.kind === "voice" && mediaSrc && (
-              <div className="flex items-center gap-2 py-1">
+              <div className="relative flex items-center gap-2 py-1">
                 <span className={cn("flex h-8 w-8 items-center justify-center rounded-full", mine ? "bg-primary-foreground/20" : "bg-secondary")}>
                   <Play className="h-4 w-4" />
                 </span>
@@ -705,14 +705,38 @@ function MessageBubble({
                   <audio controls src={mediaSrc} className="h-8 max-w-[220px]" preload="none" />
                   <div className="text-[11px] opacity-70">Voice note · {formatDuration(message.duration_seconds)}</div>
                 </div>
+                {premium && message.one_view && (
+                  <a
+                    href={mediaSrc}
+                    download={message.file_name ?? "voice-note"}
+                    className="absolute top-0 right-0 rounded-md bg-black/60 p-1.5 text-white hover:bg-black/80"
+                    aria-label="Save one-view voice note"
+                    title="Save voice note (Premium)"
+                  >
+                    <Download className="h-4 w-4" />
+                  </a>
+                )}
               </div>
             )}
             {message.kind === "file" && mediaSrc && /\.(mp4|webm|mov|m4v)$/i.test(message.file_name ?? "") ? (
-              <video src={mediaSrc} controls preload="metadata" className="max-h-72 rounded-xl" />
+              <span className="relative block">
+                <video src={mediaSrc} controls preload="metadata" className="max-h-72 rounded-xl" />
+                {premium && message.one_view && (
+                  <a
+                    href={mediaSrc}
+                    download={message.file_name ?? "video"}
+                    className="absolute bottom-2 right-2 rounded-md bg-black/60 p-1.5 text-white hover:bg-black/80"
+                    aria-label="Save one-view video"
+                    title="Save video (Premium)"
+                  >
+                    <Download className="h-4 w-4" />
+                  </a>
+                )}
+              </span>
             ) : message.kind === "file" && (
               <a
                 href={mediaSrc ?? "#"}
-                download={message.file_name ?? undefined}
+                download={!message.one_view || premium ? message.file_name ?? undefined : undefined}
                 target="_blank"
                 rel="noreferrer"
                 className={cn(
@@ -721,9 +745,16 @@ function MessageBubble({
                 )}
               >
                 <FileText className="h-5 w-5" />
-                <span className="max-w-[180px] truncate underline">{message.file_name ?? "Download file"}</span>
-                <Download className="h-4 w-4" />
+                <span className="max-w-[180px] truncate underline">
+                  {message.one_view && !premium ? message.file_name ?? "View file" : message.file_name ?? "Download file"}
+                </span>
+                {(!message.one_view || premium) && <Download className="h-4 w-4" />}
               </a>
+            )}
+            {message.deleted_for_everyone && premium && (
+              <div className="mt-1 flex items-center gap-1.5 text-[11px] italic opacity-75">
+                <Trash2 className="h-3 w-3" /> Deleted for everyone · kept visible for you (Premium)
+              </div>
             )}
             {message.one_view && (
               <div className={cn("mt-0.5 text-[10px]", mine ? "text-primary-foreground/70" : "text-muted-foreground")}>
