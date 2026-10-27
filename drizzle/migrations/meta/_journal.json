@@ -92,6 +92,13 @@
       "when": 1793084367773,
       "tag": "0012_key_wrap_update_wrapped_by",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1793089773640,
+      "tag": "0013_chat_presence_safety_and_clear",
+      "breakpoints": true
     }
   ]
 }

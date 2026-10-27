@@ -64,6 +64,39 @@ export type Database = {
         }
         Relationships: []
       }
+      chat_clears: {
+        Row: {
+          cleared_at: string
+          conversation_id: string
+          user_id: string
+        }
+        Insert: {
+          cleared_at?: string
+          conversation_id: string
+          user_id: string
+        }
+        Update: {
+          cleared_at?: string
+          conversation_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_clears_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chat_clears_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       comments: {
         Row: {
           author_id: string
@@ -756,6 +789,7 @@ export type Database = {
           created_at: string
           display_name: string
           id: string
+          last_seen_at: string | null
           public_key: string | null
           referral_code: string | null
           username: string
@@ -767,6 +801,7 @@ export type Database = {
           created_at?: string
           display_name: string
           id: string
+          last_seen_at?: string | null
           public_key?: string | null
           referral_code?: string | null
           username: string
@@ -778,6 +813,7 @@ export type Database = {
           created_at?: string
           display_name?: string
           id?: string
+          last_seen_at?: string | null
           public_key?: string | null
           referral_code?: string | null
           username?: string
@@ -1058,6 +1094,39 @@ export type Database = {
           },
         ]
       }
+      user_blocks: {
+        Row: {
+          blocked_id: string
+          blocker_id: string
+          created_at: string
+        }
+        Insert: {
+          blocked_id: string
+          blocker_id: string
+          created_at?: string
+        }
+        Update: {
+          blocked_id?: string
+          blocker_id?: string
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_blocks_blocked_id_fkey"
+            columns: ["blocked_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "user_blocks_blocker_id_fkey"
+            columns: ["blocker_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_notifications: {
         Row: {
           body: string
@@ -1090,6 +1159,55 @@ export type Database = {
           {
             foreignKeyName: "user_notifications_user_id_fkey"
             columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_reports: {
+        Row: {
+          conversation_id: string
+          created_at: string
+          id: string
+          reason: string
+          reported_id: string
+          reporter_id: string
+        }
+        Insert: {
+          conversation_id: string
+          created_at?: string
+          id?: string
+          reason: string
+          reported_id: string
+          reporter_id: string
+        }
+        Update: {
+          conversation_id?: string
+          created_at?: string
+          id?: string
+          reason?: string
+          reported_id?: string
+          reporter_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_reports_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "user_reports_reported_id_fkey"
+            columns: ["reported_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "user_reports_reporter_id_fkey"
+            columns: ["reporter_id"]
             isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]
@@ -1234,6 +1352,8 @@ export type Database = {
       can_download_from: { Args: { p_owner: string }; Returns: boolean }
       can_read_author_thread: { Args: { p_author: string }; Returns: boolean }
       can_view_profile: { Args: { p: string }; Returns: boolean }
+      chat_is_blocked: { Args: { p_conversation: string }; Returns: boolean }
+      clear_chat: { Args: { p_conversation: string }; Returns: undefined }
       find_user_by_username: {
         Args: { p_username: string }
         Returns: {
@@ -1243,6 +1363,7 @@ export type Database = {
           created_at: string
           display_name: string
           id: string
+          last_seen_at: string | null
           public_key: string | null
           referral_code: string | null
           username: string
@@ -1295,6 +1416,7 @@ export type Database = {
           username: string
         }[]
       }
+      touch_last_seen: { Args: never; Returns: undefined }
     }
     Enums: {
       [_ in never]: never
