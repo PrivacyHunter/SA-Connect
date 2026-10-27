@@ -183,6 +183,7 @@ export async function getConversationKey(conversationId: string, meId: string): 
   const cached = convKeyCache.get(conversationId);
   if (cached) return cached;
   const promise = (async () => {
+    await ensureMyKeysOnce(meId);
     const members = await memberPublicKeys(conversationId);
     if (!members.has(meId)) {
       console.debug("[e2ee] not a member of", conversationId.slice(0, 8), "as", meId.slice(0, 8));
