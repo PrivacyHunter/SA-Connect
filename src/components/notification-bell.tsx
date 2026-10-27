@@ -16,7 +16,7 @@ function useRealtimeNotifications(meId: string | undefined, qc: ReturnType<typeo
   useEffect(() => {
     if (!meId) return;
     const channel = supabase
-      .channel(`notifications-${meId}`)
+      .channel(`notifications-${meId}-${Math.random().toString(36).slice(2)}`)
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "user_notifications", filter: `user_id=eq.${meId}` },

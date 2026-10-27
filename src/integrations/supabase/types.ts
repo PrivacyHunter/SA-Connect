@@ -1262,6 +1262,10 @@ export type Database = {
         Args: { p_conversation: string; p_user: string }
         Returns: boolean
       }
+      is_message_author: {
+        Args: { p_message: string; p_user: string }
+        Returns: boolean
+      }
       is_staff: { Args: { p: string }; Returns: boolean }
       match_contacts: {
         Args: { emails: string[] }
