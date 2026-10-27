@@ -1,3 +1,4 @@
+import type { RealtimeChannel } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 
 /**
@@ -94,6 +95,29 @@ async function pairKey(userId: string, peerJwk: JsonWebKey): Promise<CryptoKey> 
 }
 
 const convKeyCache = new Map<string, Promise<CryptoKey | null>>();
+
+// Live convergence: when a member rotates the conversation key (e.g. after
+// signing in on a new device), every other open page re-derives immediately
+// instead of staying on the stale cached key until a reload.
+const keysyncChannels = new Map<string, RealtimeChannel>();
+function keysyncChannel(conversationId: string): RealtimeChannel {
+  let ch = keysyncChannels.get(conversationId);
+  if (!ch) {
+    ch = supabase
+      .channel(`keysync-${conversationId}`)
+      .on("broadcast", { event: "rotated" }, () => {
+        convKeyCache.delete(conversationId);
+        window.dispatchEvent(new CustomEvent("conv-key-rotated", { detail: { conversationId } }));
+      })
+      .subscribe();
+    keysyncChannels.set(conversationId, ch);
+  }
+  return ch;
+}
+
+function broadcastRotation(conversationId: string) {
+  void keysyncChannel(conversationId).send({ type: "broadcast", event: "rotated" });
+}
 
 async function memberPublicKeys(conversationId: string): Promise<Map<string, JsonWebKey | null>> {
   const { data } = await supabase
