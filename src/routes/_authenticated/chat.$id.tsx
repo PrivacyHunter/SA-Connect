@@ -43,7 +43,53 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { UserAvatar } from "@/components/user-avatar";
 import { CallOverlay, useCall } from "@/components/call-overlay";
-import { Phone, Video } from "lucide-react";
+import { Ban, Eraser, Flag, Phone, ShieldAlert, Video } from "lucide-react";
+import { useIsOnline } from "@/lib/presence";
+import { useChatActivity } from "@/hooks/use-chat-activity";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+
+function lastSeen(iso: string): string {
+  const t = timeAgo(iso);
+  return t === "just now" || /\d{1,2} \w|\w{3} \d/.test(t) ? t : `${t} ago`;
+}
+
+function TypingDots() {
+  return (
+    <span className="inline-flex items-end gap-0.5" aria-hidden>
+      {[0, 150, 300].map((d) => (
+        <span key={d} className="h-1.5 w-1.5 animate-bounce rounded-full bg-current" style={{ animationDelay: `${d}ms` }} />
+      ))}
+    </span>
+  );
+}
+
+function RecordingBars() {
+  return (
+    <span className="inline-flex h-3 items-center gap-0.5" aria-hidden>
+      {[0, 120, 240, 360].map((d) => (
+        <span key={d} className="h-full w-0.5 animate-pulse rounded-full bg-current" style={{ animationDelay: `${d}ms`, animationDuration: "0.7s" }} />
+      ))}
+    </span>
+  );
+}
 
 export const Route = createFileRoute("/_authenticated/chat/$id")({
   head: () => ({
@@ -66,6 +112,9 @@ function ConversationPage() {
   const { data: me } = useCurrentProfile();
   const { premium } = usePremium(me?.id);
   const [text, setText] = useState("");
+  const [confirm, setConfirm] = useState<"clear" | "block" | null>(null);
+  const [reportMode, setReportMode] = useState<"report" | "block" | null>(null);
+  const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [recording, setRecording] = useState(false);
   const [oneView, setOneView] = useState(false);
@@ -208,6 +257,31 @@ function ConversationPage() {
   const title = isDm ? other?.profiles.display_name : conv.data?.name;
   const isChannel = conv.data?.type === "channel";
   const canPost = !isChannel || conv.data?.created_by === me?.id;
+  const otherId = isDm ? other?.user_id : undefined;
+  const otherOnline = useIsOnline(otherId);
+
+  const blockState = useQuery({
+    queryKey: ["block", id, otherId],
+    enabled: !!me && !!otherId,
+    queryFn: async () => {
+      const [{ data: mine }, { data: any }] = await Promise.all([
+        supabase.from("user_blocks").select("blocked_id").eq("blocker_id", me!.id).eq("blocked_id", otherId!).maybeSingle(),
+        supabase.rpc("chat_is_blocked", { p_conversation: id }),
+      ]);
+      return { iBlocked: !!mine, blocked: !!any };
+    },
+  });
+  const iBlocked = !!blockState.data?.iBlocked;
+  const chatBlocked = !!blockState.data?.blocked;
+  const { others: activity, setActivity } = useChatActivity(id, me?.id, !chatBlocked);
+  const activeEntries = Object.entries(activity);
+  const activityKind = activeEntries.some(([, a]) => a === "recording") ? "recording" : activeEntries.length ? "typing" : null;
+  const activityNames = activeEntries
+    .filter(([, a]) => a === activityKind)
+    .map(([uid]) => members.find((m) => m.user_id === uid)?.profiles.display_name ?? "Someone");
+  const activityLabel = !activityKind
+    ? null
+    : `${isDm ? "" : activityNames.join(", ") + " "}${activityKind === "recording" ? "recording voice…" : "typing…"}`.trim();
 
   async function send(kind: Message["kind"], body: string | null, mediaUrl: string | null, fileName: string | null, duration: number | null, oneViewFlag = oneView) {
     if (!me) return;
@@ -245,6 +319,7 @@ function ConversationPage() {
     const t = text.trim();
     if (!t) return;
     setText("");
+    setActivity("idle");
     await send("text", t, null, null, null);
   }
 
@@ -290,6 +365,7 @@ function ConversationPage() {
       rec.onstop = async () => {
         stream.getTracks().forEach((t) => t.stop());
         setRecording(false);
+        setActivity("idle");
         const blob = new Blob(chunksRef.current, { type: rec.mimeType || "audio/webm" });
         const duration = Math.max(1, Math.round((Date.now() - recordStartRef.current) / 1000));
         const file = new File([blob], `voice-${Date.now()}.webm`, { type: blob.type });
@@ -305,6 +381,7 @@ function ConversationPage() {
       };
       rec.start();
       setRecording(true);
+      setActivity("recording");
     } catch {
       toast.error("Microphone permission needed for voice notes");
     }
@@ -391,6 +468,45 @@ function ConversationPage() {
   }
 
   const lastMessage = messages.data?.[messages.data.length - 1];
+
+  async function clearChat() {
+    const { error } = await supabase.rpc("clear_chat", { p_conversation: id });
+    setConfirm(null);
+    if (error) return void toast.error(error.message);
+    qc.setQueryData<Message[]>(["messages", id], []);
+    toast.success("Chat cleared from your side");
+  }
+
+  async function block() {
+    if (!me || !other) return;
+    const { error } = await supabase.from("user_blocks").insert({ blocker_id: me.id, blocked_id: other.user_id });
+    setConfirm(null);
+    if (error && error.code !== "23505") return void toast.error(error.message);
+    void qc.invalidateQueries({ queryKey: ["block", id] });
+    toast.success(`${other.profiles.display_name} blocked`);
+  }
+
+  async function unblock() {
+    if (!me || !other) return;
+    if (!premium) return void navigate({ to: "/premium" });
+    const { error } = await supabase.from("user_blocks").delete().eq("blocker_id", me.id).eq("blocked_id", other.user_id);
+    if (error) return void toast.error(error.message);
+    void qc.invalidateQueries({ queryKey: ["block", id] });
+    toast.success(`${other.profiles.display_name} unblocked`);
+  }
+
+  async function submitReport() {
+    if (!me || !other) return;
+    const { error } = await supabase
+      .from("user_reports")
+      .insert({ reporter_id: me.id, reported_id: other.user_id, conversation_id: id, reason: reason.trim() });
+    if (error) return void toast.error(error.message);
+    const alsoBlock = reportMode === "block";
+    setReportMode(null);
+    setReason("");
+    toast.success("Report sent — thank you");
+    if (alsoBlock) await block();
+  }
 
   return (
     <div className="mx-auto flex h-[calc(100dvh-3.5rem)] max-w-3xl flex-col lg:h-dvh">
