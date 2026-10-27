@@ -414,13 +414,22 @@ function ConversationPage() {
         )}
         <div className="min-w-0 flex-1">
           <h2 className="truncate font-semibold">{title ?? "Loading…"}</h2>
-          <p className="truncate text-xs text-muted-foreground">
-            {myMember?.muted && <BellOff className="mr-1 inline h-3 w-3" />}
-            {isDm
-              ? other
-                ? `${members.length} member · ${timeAgo(other.profiles.created_at)} joined · encrypted`
-                : "encrypted"
-              : `${members.length} ${members.length === 1 ? "member" : "members"}${isChannel ? " · broadcast channel · encrypted" : " · group · encrypted"}`}
+          <p className={cn("flex items-center gap-1 truncate text-xs text-muted-foreground", (activityLabel || (isDm && otherOnline)) && "text-gold")}>
+            {myMember?.muted && <BellOff className="inline h-3 w-3" />}
+            {activityLabel ? (
+              <>
+                {activityKind === "recording" ? <RecordingBars /> : <TypingDots />}
+                {activityLabel}
+              </>
+            ) : isDm ? (
+              other ? (
+                chatBlocked ? "encrypted" : otherOnline ? "Online" : other.profiles.last_seen_at ? `Last seen ${lastSeen(other.profiles.last_seen_at)}` : "Offline"
+              ) : (
+                "encrypted"
+              )
+            ) : (
+              `${members.length} ${members.length === 1 ? "member" : "members"}${isChannel ? " · broadcast channel · encrypted" : " · group · encrypted"}`
+            )}
           </p>
         </div>
         <Button variant="ghost" size="icon" aria-label="Voice call" onClick={() => call.start(false)}>
@@ -445,6 +454,30 @@ function ConversationPage() {
               <DropdownMenuItem onClick={pinLast}>
                 <Pin className="h-4 w-4" /> Pin latest message
               </DropdownMenuItem>
+            )}
+            <DropdownMenuItem onClick={() => setConfirm("clear")}>
+              <Eraser className="h-4 w-4" /> Clear chat
+            </DropdownMenuItem>
+            {isDm && other && (
+              <>
+                {iBlocked ? (
+                  <DropdownMenuItem onClick={() => (premium ? unblock() : navigate({ to: "/premium" }))}>
+                    <Ban className="h-4 w-4" /> {premium ? "Unblock" : "Unblock (Premium)"}
+                  </DropdownMenuItem>
+                ) : (
+                  <DropdownMenuItem onClick={() => setConfirm("block")}>
+                    <Ban className="h-4 w-4" /> Block
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuItem onClick={() => setReportMode("report")}>
+                  <Flag className="h-4 w-4" /> Report
+                </DropdownMenuItem>
+                {!iBlocked && (
+                  <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setReportMode("block")}>
+                    <ShieldAlert className="h-4 w-4" /> Report and block
+                  </DropdownMenuItem>
+                )}
+              </>
             )}
             <DropdownMenuSeparator />
             <DropdownMenuItem
@@ -487,6 +520,12 @@ function ConversationPage() {
             onDeleteForEveryone={deleteForEveryone}
           />
         ))}
+        {activityLabel && (
+          <div className="flex w-fit items-center gap-2 rounded-2xl bg-secondary px-3 py-2 text-xs text-secondary-foreground">
+            {activityKind === "recording" ? <RecordingBars /> : <TypingDots />}
+            {activityLabel}
+          </div>
+        )}
         <div ref={bottomRef} />
       </div>
 
