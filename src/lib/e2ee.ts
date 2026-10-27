@@ -44,27 +44,45 @@ function unpack(stored: string): { iv: Uint8Array<ArrayBuffer>; data: Uint8Array
 const subtle = () => crypto.subtle;
 const ECDH = { name: "ECDH", namedCurve: "P-256" } as const;
 
-/** Ensures the signed-in user has an E2EE key pair and uploads the public key to their profile. */
-export async function ensureMyKeys(userId: string): Promise<void> {
-  try {
-    let stored = localStorage.getItem(privStore(userId));
-    if (!stored) {
-      const pair = await subtle().generateKey(ECDH, true, ["deriveKey"]);
-      const privJwk = await subtle().exportKey("jwk", pair.privateKey);
-      stored = JSON.stringify(privJwk);
-      localStorage.setItem(privStore(userId), stored);
+/**
+ * Ensures the signed-in user has an E2EE key pair and uploads the public key
+ * to their profile. Concurrent callers share one run: two parallel runs on an
+ * empty browser would each generate a key pair and the second would overwrite
+ * the first's private key while the profile kept the first's public key —
+ * every pairwise unwrap would then fail. The re-check loop also repairs a
+ * private key that another open tab overwrote mid-run.
+ */
+const ensureInflight = new Map<string, Promise<void>>();
+export function ensureMyKeys(userId: string): Promise<void> {
+  const existing = ensureInflight.get(userId);
+  if (existing) return existing;
+  const p = (async () => {
+    try {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        let stored = localStorage.getItem(privStore(userId));
+        if (!stored) {
+          const pair = await subtle().generateKey(ECDH, true, ["deriveKey"]);
+          localStorage.setItem(privStore(userId), JSON.stringify(await subtle().exportKey("jwk", pair.privateKey)));
+          stored = localStorage.getItem(privStore(userId));
+        }
+        const jwk = JSON.parse(stored!) as JsonWebKey;
+        console.debug("[e2ee] my priv pub-x", jwk.x?.slice(0, 8), "user", userId.slice(0, 8));
+        const pubJwk = JSON.stringify({ kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y, ext: true });
+        const { data } = await supabase.from("profiles").select("public_key").eq("id", userId).maybeSingle();
+        if (data && data.public_key !== pubJwk) {
+          await supabase.from("profiles").update({ public_key: pubJwk }).eq("id", userId);
+        }
+        // Another tab may have replaced the private key while we uploaded the
+        // matching public key — converge on whatever is stored now.
+        if (localStorage.getItem(privStore(userId)) === stored) return;
+      }
+    } catch {
+      // E2EE unavailable; messages fall back to plaintext transport
     }
-    const jwk = JSON.parse(stored) as JsonWebKey;
-    console.debug("[e2ee] my priv pub-x", jwk.x?.slice(0, 8), "user", userId.slice(0, 8));
-    const publicJwk = { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y, ext: true };
-    const pubJwk = JSON.stringify(publicJwk);
-    const { data } = await supabase.from("profiles").select("public_key").eq("id", userId).maybeSingle();
-    if (data && data.public_key !== pubJwk) {
-      await supabase.from("profiles").update({ public_key: pubJwk }).eq("id", userId);
-    }
-  } catch {
-    // E2EE unavailable; messages fall back to plaintext transport
-  }
+  })();
+  ensureInflight.set(userId, p);
+  p.catch(() => ensureInflight.delete(userId));
+  return p;
 }
 
 // Key derivation must never run against a stale profile public key (e.g. the
