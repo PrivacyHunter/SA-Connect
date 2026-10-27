@@ -175,7 +175,8 @@ async function unwrapKey(
     const pk = await pairKey(userId, peerJwk);
     const raw = await subtle().decrypt({ name: "AES-GCM", iv: packed.iv }, pk, packed.data);
     return await subtle().importKey("raw", raw, { name: "AES-GCM" }, true, ["encrypt", "decrypt"]);
-  } catch {
+  } catch (err) {
+    console.debug("[e2ee] unwrap error", (err as Error)?.name, (err as Error)?.message);
     return null;
   }
 }
