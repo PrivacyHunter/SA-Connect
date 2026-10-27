@@ -20,6 +20,7 @@ import { formatCount, parseHashtags, timeAgo } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Award } from "lucide-react";
 import { VerificationCard } from "@/components/verification-card";
+import { BlockedUsersCard } from "@/components/blocked-users-card";
 import { badgeName, experience, levelFromXp, xpForLevel } from "@/lib/levels";
 import type { Post, Profile, Reel, Video } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -175,6 +176,7 @@ function ProfilePage() {
         </div>
       )}
       {isMe && <VerificationCard />}
+      {isMe && me && <BlockedUsersCard meId={me.id} />}
       {p.bio && <p className="mt-3 whitespace-pre-wrap px-4 text-sm">{p.bio}</p>}
 
       <div className="mt-4 flex gap-6 px-4 text-sm">
