@@ -71,6 +71,13 @@
       "when": 1793082717058,
       "tag": "0009_fix_membership_policy_recursion",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1793082978128,
+      "tag": "0010_creator_reads_own_conversation",
+      "breakpoints": true
     }
   ]
 }
