@@ -64,6 +64,13 @@
       "when": 1793074557669,
       "tag": "0008_apply_project_migrations",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793082717058,
+      "tag": "0009_fix_membership_policy_recursion",
+      "breakpoints": true
     }
   ]
 }
