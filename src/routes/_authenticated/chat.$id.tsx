@@ -177,6 +177,16 @@ function ConversationPage() {
     };
   }, [id, qc, me]);
 
+  // Re-decrypt history after a live conversation-key rotation from any member.
+  useEffect(() => {
+    const onRotated = (e: Event) => {
+      const detail = (e as CustomEvent<{ conversationId?: string }>).detail;
+      if (detail?.conversationId === id) void qc.invalidateQueries({ queryKey: ["messages", id] });
+    };
+    window.addEventListener("conv-key-rotated", onRotated);
+    return () => window.removeEventListener("conv-key-rotated", onRotated);
+  }, [id, qc]);
+
   // mark read + scroll to bottom
   useEffect(() => {
     if (!me) return;
