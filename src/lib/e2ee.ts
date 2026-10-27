@@ -55,6 +55,7 @@ export async function ensureMyKeys(userId: string): Promise<void> {
       localStorage.setItem(privStore(userId), stored);
     }
     const jwk = JSON.parse(stored) as JsonWebKey;
+    console.debug("[e2ee] my priv pub-x", jwk.x?.slice(0, 8), "user", userId.slice(0, 8));
     const publicJwk = { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y, ext: true };
     const pubJwk = JSON.stringify(publicJwk);
     const { data } = await supabase.from("profiles").select("public_key").eq("id", userId).maybeSingle();
@@ -98,6 +99,7 @@ function myPrivateKey(userId: string): Promise<CryptoKey> {
 const pairCache = new Map<string, Promise<CryptoKey>>();
 async function pairKey(userId: string, peerJwk: JsonWebKey): Promise<CryptoKey> {
   const cacheKey = `${userId}:${peerJwk.x}:${peerJwk.y}`;
+  console.debug("[e2ee] pairKey me", userId.slice(0, 8), "peer-x", peerJwk.x?.slice(0, 8));
   let p = pairCache.get(cacheKey);
   if (!p) {
     const pub = await subtle().importKey("jwk", peerJwk, ECDH, false, []);
