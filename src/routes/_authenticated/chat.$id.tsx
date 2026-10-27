@@ -528,7 +528,26 @@ function ConversationPage() {
           </div>
         )}
         <div className="flex items-center gap-2">
-        {canPost ? (
+        {isDm && chatBlocked ? (
+          <div className="flex w-full flex-wrap items-center justify-center gap-2 py-2 text-center text-sm text-muted-foreground">
+            {iBlocked ? (
+              <>
+                <span>You blocked {other?.profiles.display_name}.</span>
+                {premium ? (
+                  <Button type="button" size="sm" variant="secondary" onClick={unblock}>
+                    Unblock
+                  </Button>
+                ) : (
+                  <Button type="button" size="sm" variant="secondary" onClick={() => navigate({ to: "/premium" })}>
+                    Unblock with Premium
+                  </Button>
+                )}
+              </>
+            ) : (
+              <span>You can’t send messages in this chat.</span>
+            )}
+          </div>
+        ) : canPost ? (
           <>
             <input type="file" accept="image/*,video/*" className="hidden" id={`img-${id}`} onChange={(e) => { const f = e.target.files?.[0]; if (f) pickFile(f); }} />
             <input type="file" className="hidden" id={`file-${id}`} onChange={(e) => { const f = e.target.files?.[0]; if (f) pickFile(f); }} />
@@ -550,7 +569,7 @@ function ConversationPage() {
               aria-label={recording ? "Stop recording" : "Record voice note"}
               className={cn(recording && "text-destructive")}
             >
-              {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : <Mic className="h-5 w-5" />}
+              {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : <Mic className={cn("h-5 w-5", recording && "animate-pulse")} />}
             </Button>
             <Button
               type="button"
@@ -564,11 +583,21 @@ function ConversationPage() {
             >
               <Eye className="h-5 w-5" />
             </Button>
-            <Input
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder={oneView ? "One-view message — type and send" : recording ? "Recording voice note…" : "Type a message"}
-            />
+            {recording ? (
+              <div className="flex h-10 flex-1 items-center gap-2 rounded-md border border-destructive/40 px-3 text-sm text-destructive">
+                <RecordingBars /> Recording voice note…
+              </div>
+            ) : (
+              <Input
+                value={text}
+                onChange={(e) => {
+                  setText(e.target.value);
+                  setActivity(e.target.value ? "typing" : "idle");
+                }}
+                onBlur={() => setActivity("idle")}
+                placeholder={oneView ? "One-view message — type and send" : "Type a message"}
+              />
+            )}
             <Button type="submit" size="icon" disabled={!text.trim()} aria-label="Send">
               <Send className="h-4 w-4" />
             </Button>
@@ -580,6 +609,43 @@ function ConversationPage() {
         )}
         </div>
       </form>
+
+      <AlertDialog open={confirm !== null} onOpenChange={(o) => !o && setConfirm(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{confirm === "clear" ? "Clear this chat?" : `Block ${other?.profiles.display_name ?? "this person"}?`}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirm === "clear"
+                ? "All messages in this chat will be removed from your side only. The other person still keeps their copy."
+                : premium
+                  ? "They won’t be able to message you here. You can unblock anytime."
+                  : "They won’t be able to message you here. Unblocking is a Premium feature."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => (confirm === "clear" ? clearChat() : block())}>
+              {confirm === "clear" ? "Clear chat" : "Block"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <Dialog open={reportMode !== null} onOpenChange={(o) => !o && setReportMode(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{reportMode === "block" ? "Report and block" : "Report"} {other?.profiles.display_name}</DialogTitle>
+            <DialogDescription>Tell us what happened. Our team reviews every report.</DialogDescription>
+          </DialogHeader>
+          <Textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason (spam, harassment, scam…)" maxLength={2000} />
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setReportMode(null)}>Cancel</Button>
+            <Button variant="destructive" disabled={reason.trim().length < 3} onClick={submitReport}>
+              {reportMode === "block" ? "Report & block" : "Send report"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
