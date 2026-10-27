@@ -1173,6 +1173,7 @@ export type Database = {
           reason: string
           reported_id: string
           reporter_id: string
+          status: string
         }
         Insert: {
           conversation_id: string
@@ -1181,6 +1182,7 @@ export type Database = {
           reason: string
           reported_id: string
           reporter_id: string
+          status?: string
         }
         Update: {
           conversation_id?: string
@@ -1189,6 +1191,7 @@ export type Database = {
           reason?: string
           reported_id?: string
           reporter_id?: string
+          status?: string
         }
         Relationships: [
           {
