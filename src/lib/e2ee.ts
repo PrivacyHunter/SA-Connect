@@ -118,7 +118,8 @@ function myPrivateKey(userId: string): Promise<CryptoKey> {
 function myPublicJwk(userId: string): JsonWebKey | null {
   try {
     const jwk = JSON.parse(localStorage.getItem(privStore(userId))!) as JsonWebKey;
-    return { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y, ext: true };
+    const pub: JsonWebKey = { kty: jwk.kty!, crv: jwk.crv!, x: jwk.x!, y: jwk.y!, ext: true };
+    return pub;
   } catch {
     return null;
   }
