@@ -222,7 +222,7 @@ export async function getConversationKey(conversationId: string, meId: string): 
       (
         await supabase
           .from("conversation_keys")
-          .select("wrapped_by, wrapped_key, created_at")
+          .select("wrapped_by, wrapped_key, wrapper_public_key, created_at")
           .eq("conversation_id", conversationId)
           .eq("user_id", meId)
           .order("created_at", { ascending: false })
@@ -236,8 +236,13 @@ export async function getConversationKey(conversationId: string, meId: string): 
       const rows = await fetchRows();
       console.debug("[e2ee] attempt", i, "rows", (rows ?? []).length, "for", meId.slice(0, 8));
       // Newest wrap first: after a key rotation everyone converges on the latest key.
-      for (const row of (rows ?? []) as { wrapped_by: string; wrapped_key: string }[]) {
-        const peer = members.get(row.wrapped_by);
+      for (const row of (rows ?? []) as { wrapped_by: string; wrapped_key: string; wrapper_public_key: string | null }[]) {
+        // The wrap was created with the wrapper's key pair AT WRAP TIME —
+        // stored on the row, because the wrapper may have since signed in on
+        // a new device and replaced their profile public key.
+        const peer = row.wrapper_public_key
+          ? (JSON.parse(row.wrapper_public_key) as JsonWebKey)
+          : members.get(row.wrapped_by);
         if (peer) {
           const key = await unwrapKey(meId, peer, row.wrapped_key);
           console.debug("[e2ee] unwrap from", row.wrapped_by.slice(0, 8), key ? "OK" : "FAIL");

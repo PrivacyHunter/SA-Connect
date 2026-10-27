@@ -167,6 +167,7 @@ export type Database = {
           user_id: string
           wrapped_by: string
           wrapped_key: string
+          wrapper_public_key: string | null
         }
         Insert: {
           conversation_id: string
@@ -175,6 +176,7 @@ export type Database = {
           user_id: string
           wrapped_by: string
           wrapped_key: string
+          wrapper_public_key?: string | null
         }
         Update: {
           conversation_id?: string
@@ -183,6 +185,7 @@ export type Database = {
           user_id?: string
           wrapped_by?: string
           wrapped_key?: string
+          wrapper_public_key?: string | null
         }
         Relationships: [
           {

@@ -127,6 +127,13 @@
       "when": 1793106880087,
       "tag": "0017_conversation_key_generations",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1793107008045,
+      "tag": "0018_conversation_key_wrapper_pub",
+      "breakpoints": true
     }
   ]
 }
