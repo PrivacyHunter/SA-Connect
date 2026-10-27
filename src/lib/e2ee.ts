@@ -266,9 +266,13 @@ export async function getConversationKey(conversationId: string, meId: string): 
     }
     console.debug("[e2ee] rotation inserts", inserts.length, "targets", inserts.map((r) => r.user_id.slice(0, 8)).join(","));
     if (inserts.length) {
+      // Insert, never upsert on (conversation_id, user_id, wrapped_by): a
+      // member rotating twice would otherwise overwrite their previous
+      // generation's wrap — the very row history migration needs to unwrap
+      // older messages. Each rotation appends a new generation instead.
       const { error } = await supabase
         .from("conversation_keys")
-        .upsert(inserts, { onConflict: "conversation_id,user_id,wrapped_by" });
+        .insert(inserts);
       if (error) {
         // Never keep a key that nobody else can obtain — future messages
         // encrypted with it would be unreadable for every other member.

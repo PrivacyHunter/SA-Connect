@@ -120,6 +120,13 @@
       "when": 1793105952226,
       "tag": "0016_member_reencrypt_message_bodies",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1793106880087,
+      "tag": "0017_conversation_key_generations",
+      "breakpoints": true
     }
   ]
 }

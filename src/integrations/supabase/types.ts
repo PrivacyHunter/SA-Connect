@@ -163,6 +163,7 @@ export type Database = {
         Row: {
           conversation_id: string
           created_at: string
+          generation: string
           user_id: string
           wrapped_by: string
           wrapped_key: string
@@ -170,6 +171,7 @@ export type Database = {
         Insert: {
           conversation_id: string
           created_at?: string
+          generation?: string
           user_id: string
           wrapped_by: string
           wrapped_key: string
@@ -177,6 +179,7 @@ export type Database = {
         Update: {
           conversation_id?: string
           created_at?: string
+          generation?: string
           user_id?: string
           wrapped_by?: string
           wrapped_key?: string
