@@ -970,7 +970,7 @@ export type Database = {
           author_id: string
           caption?: string | null
           created_at?: string
-          expires_at?: string
+          expires_at: string
           id?: string
           media_url: string
         }
