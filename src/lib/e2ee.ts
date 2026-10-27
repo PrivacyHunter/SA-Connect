@@ -276,7 +276,7 @@ export async function getConversationKey(conversationId: string, meId: string): 
       if (error) {
         // Never keep a key that nobody else can obtain — future messages
         // encrypted with it would be unreadable for every other member.
-        console.debug("[e2ee] rotation upsert error", error.message);
+        console.debug("[e2ee] rotation insert error", error.message);
         convKeyCache.delete(conversationId);
         return null;
       }
