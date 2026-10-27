@@ -116,7 +116,22 @@ function keysyncChannel(conversationId: string): RealtimeChannel {
 }
 
 function broadcastRotation(conversationId: string) {
-  void keysyncChannel(conversationId).send({ type: "broadcast", event: "rotated" });
+  const ch = keysyncChannel(conversationId);
+  const send = () => void ch.send({ type: "broadcast", event: "rotated" });
+  if (ch.state === "joined") {
+    send();
+    return;
+  }
+  // The channel is still subscribing — deliver as soon as it joins.
+  const started = Date.now();
+  const timer = setInterval(() => {
+    if (ch.state === "joined") {
+      clearInterval(timer);
+      send();
+    } else if (Date.now() - started > 15000) {
+      clearInterval(timer);
+    }
+  }, 250);
 }
 
 async function memberPublicKeys(conversationId: string): Promise<Map<string, JsonWebKey | null>> {
