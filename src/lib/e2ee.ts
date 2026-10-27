@@ -66,6 +66,19 @@ export async function ensureMyKeys(userId: string): Promise<void> {
   }
 }
 
+// Key derivation must never run against a stale profile public key (e.g. the
+// wrap created before this browser uploaded its current key), so every
+// derive/encrypt/decrypt path awaits this memoized promise first.
+const ensureMemo = new Map<string, Promise<void>>();
+function ensureMyKeysOnce(userId: string): Promise<void> {
+  let p = ensureMemo.get(userId);
+  if (!p) {
+    p = ensureMyKeys(userId).catch(() => undefined);
+    ensureMemo.set(userId, p);
+  }
+  return p;
+}
+
 const privCache = new Map<string, Promise<CryptoKey>>();
 function myPrivateKey(userId: string): Promise<CryptoKey> {
   let p = privCache.get(userId);
