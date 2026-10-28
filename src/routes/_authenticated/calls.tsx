@@ -61,7 +61,7 @@ function CallsPage() {
         <p className="text-sm text-muted-foreground">Voice and video calls, WhatsApp style.</p>
       </header>
       {rows.length === 0 ? (
-        <EmptyState icon={Phone} title="No calls yet" body="Start a voice or video call from any chat." />
+        <EmptyState icon={Phone} title="No calls yet" hint="Start a voice or video call from any chat." />
       ) : (
         <ul className="flex flex-col gap-2">
           {rows.map((r) => {

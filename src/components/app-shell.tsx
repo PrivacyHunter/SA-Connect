@@ -9,6 +9,7 @@ import {
   Newspaper,
   PanelLeftClose,
   PanelLeftOpen,
+  Phone,
   User,
   Users,
   ShoppingBag,
@@ -32,6 +33,7 @@ import type { Profile } from "@/lib/types";
 
 const NAV = [
   { to: "/chat", label: "Chat", icon: MessageCircle },
+  { to: "/calls", label: "Calls", icon: Phone },
   { to: "/feed", label: "Feed", icon: Newspaper },
   { to: "/reels", label: "Reels", icon: Clapperboard },
   { to: "/videos", label: "Videos", icon: MonitorPlay },
