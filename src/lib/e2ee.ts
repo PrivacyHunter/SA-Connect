@@ -5,10 +5,13 @@ import { supabase } from "@/integrations/supabase/client";
  * End-to-end encryption for chat text.
  *
  * Every user holds an ECDH P-256 key pair; the private key never leaves the
- * browser (localStorage). Each conversation has a random AES-GCM conversation
- * key which is wrapped (encrypted) for every member with the pairwise ECDH
- * key, stored in `conversation_keys`. Message bodies are stored as
- * "enc:<iv-b64>:<ciphertext-b64>" and can only be decrypted by conversation
+ * browser in plaintext — localStorage holds the working copy and a second
+ * copy is escrowed on the profile, encrypted with a key derived from the
+ * user's login password, so a brand-new device can recover the same key pair
+ * and keep decrypting history. Each conversation has a random AES-GCM
+ * conversation key which is wrapped (encrypted) for every member with the
+ * pairwise ECDH key, stored in `conversation_keys`. Message bodies are stored
+ * as "enc:<iv-b64>:<ciphertext-b64>" and can only be decrypted by conversation
  * members holding their private key.
  */
 
