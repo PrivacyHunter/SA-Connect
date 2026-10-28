@@ -155,6 +155,13 @@
       "when": 1793157862416,
       "tag": "0021_add_profile_key_escrow",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1793168455023,
+      "tag": "0022_add_calls",
+      "breakpoints": true
     }
   ]
 }

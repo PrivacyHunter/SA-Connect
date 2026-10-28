@@ -9,6 +9,7 @@ import {
   Newspaper,
   PanelLeftClose,
   PanelLeftOpen,
+  Phone,
   User,
   Users,
   ShoppingBag,
@@ -19,6 +20,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { IncomePopup, Marquee, SiteFooter } from "@/components/site-chrome";
 import { ChatNotifier } from "@/components/chat-notifier";
+import { CallProvider } from "@/lib/call-engine";
 import { NotificationBell } from "@/components/notification-bell";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentProfile } from "@/hooks/use-current-user";
@@ -32,6 +34,7 @@ import type { Profile } from "@/lib/types";
 
 const NAV = [
   { to: "/chat", label: "Chat", icon: MessageCircle },
+  { to: "/calls", label: "Calls", icon: Phone },
   { to: "/feed", label: "Feed", icon: Newspaper },
   { to: "/reels", label: "Reels", icon: Clapperboard },
   { to: "/videos", label: "Videos", icon: MonitorPlay },
@@ -45,7 +48,9 @@ export function AppShell() {
   const { data: me } = useCurrentProfile();
   return (
     <OnlineProvider userId={me?.id ?? null}>
-      <Shell me={me} />
+      <CallProvider meId={me?.id}>
+        <Shell me={me} />
+      </CallProvider>
     </OnlineProvider>
   );
 }
