@@ -64,6 +64,116 @@ export type Database = {
         }
         Relationships: []
       }
+      call_log: {
+        Row: {
+          callee_id: string
+          caller_id: string
+          conversation_id: string
+          created_at: string
+          duration_seconds: number
+          id: string
+          kind: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          callee_id: string
+          caller_id: string
+          conversation_id: string
+          created_at?: string
+          duration_seconds?: number
+          id?: string
+          kind: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          callee_id?: string
+          caller_id?: string
+          conversation_id?: string
+          created_at?: string
+          duration_seconds?: number
+          id?: string
+          kind?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "call_log_callee_id_fkey"
+            columns: ["callee_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "call_log_caller_id_fkey"
+            columns: ["caller_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "call_log_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      call_signals: {
+        Row: {
+          conversation_id: string
+          created_at: string
+          from_user: string
+          id: string
+          payload: Json
+          to_user: string
+          type: string
+        }
+        Insert: {
+          conversation_id: string
+          created_at?: string
+          from_user: string
+          id?: string
+          payload?: Json
+          to_user: string
+          type: string
+        }
+        Update: {
+          conversation_id?: string
+          created_at?: string
+          from_user?: string
+          id?: string
+          payload?: Json
+          to_user?: string
+          type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "call_signals_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "call_signals_from_user_fkey"
+            columns: ["from_user"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "call_signals_to_user_fkey"
+            columns: ["to_user"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       chat_clears: {
         Row: {
           cleared_at: string
@@ -1464,6 +1574,15 @@ export type Database = {
           matched_email: string
           username: string
         }[]
+      }
+      notify_missed_call: {
+        Args: {
+          _callee: string
+          _conversation: string
+          _kind: string
+          _reason: string
+        }
+        Returns: undefined
       }
       profile_stats: {
         Args: { p: string }
