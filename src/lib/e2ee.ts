@@ -128,6 +128,93 @@ function myPublicJwk(userId: string): JsonWebKey | null {
   }
 }
 
+// ---- Password escrow -------------------------------------------------------
+// The private JWK is stored on the profile encrypted under a PBKDF2 key
+// derived from the login password. A new device recovers the SAME key pair
+// at sign-in instead of generating a fresh one, so all existing wraps and
+// history stay readable. Losing the password loses the escrow — the same
+// trade-off as any password-protected backup.
+
+const PBKDF2_ITERATIONS = 150_000;
+
+async function passwordKEK(password: string, salt: Uint8Array<ArrayBuffer>): Promise<CryptoKey> {
+  const base = await subtle().importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, [
+    "deriveKey",
+  ]);
+  return subtle().deriveKey(
+    { name: "PBKDF2", salt, iterations: PBKDF2_ITERATIONS, hash: "SHA-256" },
+    base,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"],
+  );
+}
+
+/** Encrypts the local private key with the login password and stores it on the profile. */
+export async function escrowPrivateKey(userId: string, password: string): Promise<boolean> {
+  try {
+    const jwk = localStorage.getItem(privStore(userId));
+    if (!jwk || !password) return false;
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const kek = await passwordKEK(password, salt);
+    const ct = await subtle().encrypt({ name: "AES-GCM", iv }, kek, new TextEncoder().encode(jwk));
+    const payload = JSON.stringify({ v: 1, salt: toB64(salt), iv: toB64(iv), ct: toB64(ct) });
+    const { error } = await supabase
+      .from("profiles")
+      .update({ encrypted_private_key: payload })
+      .eq("id", userId);
+    return !error;
+  } catch {
+    return false;
+  }
+}
+
+function hasEscrowColumn(data: { encrypted_private_key?: unknown } | null): boolean {
+  return typeof data?.encrypted_private_key === "string" && data.encrypted_private_key.length > 0;
+}
+
+async function fetchEscrow(userId: string): Promise<string | null> {
+  const { data } = await supabase
+    .from("profiles")
+    .select("encrypted_private_key")
+    .eq("id", userId)
+    .maybeSingle();
+  return hasEscrowColumn(data as { encrypted_private_key?: unknown } | null)
+    ? ((data as { encrypted_private_key: string }).encrypted_private_key)
+    : null;
+}
+
+/**
+ * Recovers the escrowed private key with the login password. Only runs while
+ * there is no local key yet (a device that already holds a key keeps it).
+ * Returns true when the local store now holds a usable private key.
+ */
+export async function recoverPrivateKeyFromEscrow(userId: string, password: string): Promise<boolean> {
+  try {
+    if (localStorage.getItem(privStore(userId)) || !password) return false;
+    const raw = await fetchEscrow(userId);
+    if (!raw) return false;
+    const payload = JSON.parse(raw) as { salt: string; iv: string; ct: string };
+    const kek = await passwordKEK(password, fromB64(payload.salt));
+    const plain = await subtle().decrypt(
+      { name: "AES-GCM", iv: fromB64(payload.iv) },
+      kek,
+      fromB64(payload.ct),
+    );
+    const jwk = JSON.parse(new TextDecoder().decode(plain)) as JsonWebKey;
+    if (!jwk.d || !jwk.x || !jwk.y) return false;
+    localStorage.setItem(privStore(userId), JSON.stringify(jwk));
+    // Drop memoized key promises so every path picks up the recovered key.
+    ensureMemo.delete(userId);
+    privCache.delete(userId);
+    pairCache.clear();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const pairCache = new Map<string, Promise<CryptoKey>>();
 async function pairKey(userId: string, peerJwk: JsonWebKey): Promise<CryptoKey> {
   const cacheKey = `${userId}:${peerJwk.x}:${peerJwk.y}`;
