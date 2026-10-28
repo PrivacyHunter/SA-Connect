@@ -43,6 +43,77 @@ export function playMessageSound() {
   }
 }
 
+/** Classic ringback: the callee's phone is ringing (callee online). */
+export function startOutgoingRing(): () => void {
+  try {
+    const c = audio();
+    if (!c) return () => {};
+    const beep = () => {
+      const t = c.currentTime;
+      tone(440, t, 1.8, 0.09);
+      tone(480, t, 1.8, 0.09);
+    };
+    beep();
+    const iv = window.setInterval(beep, 4200);
+    return () => window.clearInterval(iv);
+  } catch {
+    return () => {};
+  }
+}
+
+/** Distinct incoming-call trill; slightly higher pitch for video calls. */
+export function startIncomingRing(video = false): () => void {
+  try {
+    const c = audio();
+    if (!c) return () => {};
+    const base = video ? 880 : 740;
+    const beep = () => {
+      const t = c.currentTime;
+      tone(base, t, 0.18, 0.16, "triangle");
+      tone(base * 1.25, t + 0.2, 0.18, 0.16, "triangle");
+      tone(base, t + 0.4, 0.18, 0.16, "triangle");
+      tone(base * 1.25, t + 0.6, 0.35, 0.16, "triangle");
+    };
+    beep();
+    const iv = window.setInterval(beep, 2400);
+    return () => window.clearInterval(iv);
+  } catch {
+    return () => {};
+  }
+}
+
+/** "User is offline" tone: three low beeps, then a pause. */
+export function startOfflineTone(): () => void {
+  try {
+    const c = audio();
+    if (!c) return () => {};
+    const beep = () => {
+      const t = c.currentTime;
+      tone(320, t, 0.12, 0.14, "square");
+      tone(320, t + 0.18, 0.12, 0.14, "square");
+      tone(320, t + 0.36, 0.22, 0.14, "square");
+    };
+    beep();
+    const iv = window.setInterval(beep, 3600);
+    return () => window.clearInterval(iv);
+  } catch {
+    return () => {};
+  }
+}
+
+/** Short descending beep when a call ends, is declined or goes unanswered. */
+export function playCallEnded() {
+  try {
+    const c = audio();
+    if (!c) return;
+    const t = c.currentTime;
+    tone(660, t, 0.12, 0.14);
+    tone(440, t + 0.15, 0.25, 0.14);
+  } catch {
+    /* ignore */
+  }
+}
+
 /** Looping ringtone for an incoming call. Returns a stop function. */
 export function startRingtone(): () => void {
   try {
