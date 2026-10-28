@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useRef, useState, type ReactNode 
 import { Mic, MicOff, Phone, PhoneOff, Video, VideoOff } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import type { Json } from "@/integrations/supabase/types";
 import { playCallEnded, startIncomingRing, startOfflineTone, startOutgoingRing } from "@/lib/notify";
 import { useOnlineUsers } from "@/lib/presence";
 import { Button } from "@/components/ui/button";
@@ -132,10 +133,10 @@ export function CallProvider({ meId, children }: { meId: string | null | undefin
       .eq("id", logId);
     if (logStatus === "missed" && callerRef.current) {
       await supabase.rpc("notify_missed_call", {
-        conversation: conversationId,
-        callee,
-        kind: kindRef.current,
-        reason: notifyReason ?? "no-answer",
+        _conversation: conversationId,
+        _callee: callee,
+        _kind: kindRef.current,
+        _reason: notifyReason ?? "no-answer",
       });
     }
   };
@@ -157,7 +158,7 @@ export function CallProvider({ meId, children }: { meId: string | null | undefin
           from_user: meId,
           to_user: to,
           type: "ice",
-          payload: { candidate: e.candidate.toJSON() },
+          payload: { candidate: e.candidate.toJSON() } as unknown as Json,
         });
       }
     };
@@ -324,7 +325,7 @@ export function CallProvider({ meId, children }: { meId: string | null | undefin
         from_user: meId,
         to_user: calleeId,
         type: "offer",
-        payload: { sdp: offer, video },
+        payload: { sdp: offer, video } as unknown as Json,
       });
       if (error) throw error;
       beginTimeouts();
@@ -360,7 +361,7 @@ export function CallProvider({ meId, children }: { meId: string | null | undefin
         from_user: meId!,
         to_user: offer.from_user,
         type: "answer",
-        payload: { sdp: answer },
+        payload: { sdp: answer } as unknown as Json,
       });
       startedRef.current = Date.now();
       setState("connected");

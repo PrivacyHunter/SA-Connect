@@ -125,9 +125,10 @@ function RecordingBars() {
 }
 
 export const Route = createFileRoute("/_authenticated/chat/$id")({
-  validateSearch: (search: Record<string, unknown>): { call?: "voice" | "video" } => ({
-    call: search.call === "video" || search.call === "voice" ? search.call : undefined,
-  }),
+  validateSearch: (search: { [key: string]: unknown }): { call?: "voice" | "video" } => {
+    const value = search["call"];
+    return value === "video" || value === "voice" ? { call: value } : {};
+  },
   head: () => ({
     meta: [
       { title: "Conversation — SA Connect" },
