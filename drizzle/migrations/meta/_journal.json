@@ -134,6 +134,13 @@
       "when": 1793107008045,
       "tag": "0018_conversation_key_wrapper_pub",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1793155057846,
+      "tag": "0019_developer_role_and_member_discovery",
+      "breakpoints": true
     }
   ]
 }
