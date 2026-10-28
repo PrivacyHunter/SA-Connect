@@ -1363,6 +1363,27 @@ export type Database = {
       can_view_profile: { Args: { p: string }; Returns: boolean }
       chat_is_blocked: { Args: { p_conversation: string }; Returns: boolean }
       clear_chat: { Args: { p_conversation: string }; Returns: undefined }
+      discover_members: {
+        Args: { p_search?: string }
+        Returns: {
+          avatar_url: string | null
+          banner_url: string | null
+          bio: string
+          created_at: string
+          display_name: string
+          id: string
+          last_seen_at: string | null
+          public_key: string | null
+          referral_code: string | null
+          username: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "profiles"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       find_user_by_username: {
         Args: { p_username: string }
         Returns: {
