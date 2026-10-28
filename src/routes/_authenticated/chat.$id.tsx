@@ -414,7 +414,7 @@ function ConversationPage() {
         duration_seconds: duration,
         one_view: oneViewFlag,
       })
-      .select("*, profiles!messages_sender_id_fkey(*), message_deletes(user_id), message_views(user_id)")
+      .select("*, profiles!messages_sender_id_fkey(*), message_deletes(user_id), message_views(user_id), message_deliveries(user_id)")
       .single();
     if (error) {
       toast.error(error.message);
@@ -428,6 +428,19 @@ function ConversationPage() {
       qc.setQueryData<Message[]>(["messages", id], [...current, decrypted]);
     }
     qc.invalidateQueries({ queryKey: ["conversations"] });
+  }
+
+  /** Receipt: tells senders their message reached this device (drives the double tick). */
+  async function markDelivered(rows: Pick<Message, "id" | "sender_id">[]) {
+    if (!me) return;
+    const incoming = rows.filter((r) => r.sender_id !== me.id);
+    if (!incoming.length) return;
+    await supabase
+      .from("message_deliveries")
+      .upsert(incoming.map((r) => ({ message_id: r.id, user_id: me.id })), {
+        onConflict: "message_id,user_id",
+        ignoreDuplicates: true,
+      });
   }
 
   async function submitText(e: FormEvent) {
@@ -655,7 +668,7 @@ function ConversationPage() {
               </>
             ) : isDm ? (
               other ? (
-                chatBlocked ? "encrypted" : otherOnline ? "Online" : other.profiles.last_seen_at ? `Last seen ${lastSeen(other.profiles.last_seen_at)}` : "Offline"
+                chatBlocked ? "encrypted" : otherOnline ? "Online" : other.profiles.last_seen_at ? `Last seen ${formatLastSeen(other.profiles.last_seen_at)}` : "Offline"
               ) : (
                 "encrypted"
               )
