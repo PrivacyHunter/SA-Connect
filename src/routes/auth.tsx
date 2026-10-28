@@ -104,6 +104,7 @@ export function AuthPage() {
         if (!data.session) {
           setNotice("Account created! Check your email inbox and click the confirmation link, then sign in here.");
         } else {
+          if (data.user) await setupKeysAfterSignIn(data.user.id, password);
           navigate({ to: after, replace: true });
         }
       }
