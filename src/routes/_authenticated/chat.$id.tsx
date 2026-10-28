@@ -700,6 +700,9 @@ function ConversationPage() {
                 <Pin className="h-4 w-4" /> Pin latest message
               </DropdownMenuItem>
             )}
+            <DropdownMenuItem onClick={() => setWallpaperOpen(true)}>
+              <Palette className="h-4 w-4" /> Chat wallpaper
+            </DropdownMenuItem>
             <DropdownMenuItem onClick={() => setConfirm("clear")}>
               <Eraser className="h-4 w-4" /> Clear chat
             </DropdownMenuItem>
@@ -747,7 +750,7 @@ function ConversationPage() {
       )}
 
       {/* messages */}
-      <div className="flex-1 space-y-2 overflow-y-auto px-4 py-4">
+      <div className="flex-1 space-y-2 overflow-y-auto px-4 py-4" style={messagesStyle}>
         {messages.isLoading && <p className="text-sm text-muted-foreground">Loading messages…</p>}
         {messages.data?.length === 0 && (
           <p className="py-10 text-center text-sm text-muted-foreground">
@@ -761,6 +764,7 @@ function ConversationPage() {
             mine={m.sender_id === me?.id}
             meId={me?.id ?? ""}
             premium={premium}
+            members={members}
             onDeleteForMe={deleteForMe}
             onDeleteForEveryone={deleteForEveryone}
           />
