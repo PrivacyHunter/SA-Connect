@@ -157,6 +157,48 @@ function ConversationPage() {
   const chunksRef = useRef<Blob[]>([]);
   const recordStartRef = useRef(0);
   const call = useCall(id, me?.id);
+  const [wallpaperOpen, setWallpaperOpen] = useState(false);
+  const [wallpaper, setWallpaper] = useState<Wallpaper | null>(null);
+
+  // Wallpaper is a per-device preference, kept in localStorage per conversation.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(`chat-wallpaper:${id}`);
+      if (raw) setWallpaper(JSON.parse(raw) as Wallpaper);
+    } catch {
+      /* ignore corrupt value */
+    }
+  }, [id]);
+
+  const customWallpaperPath = wallpaper?.kind === "image" ? wallpaper.path : null;
+  const { data: wallpaperSrc } = useMediaSrc(customWallpaperPath ? "media" : null, customWallpaperPath);
+  const messagesStyle: CSSProperties =
+    wallpaper?.kind === "image" && wallpaperSrc
+      ? { backgroundImage: `url(${wallpaperSrc})`, backgroundSize: "cover", backgroundPosition: "center" }
+      : wallpaper?.kind === "preset"
+        ? (WALLPAPER_PRESETS.find((w) => w.id === wallpaper.id)?.style ?? {})
+        : {};
+
+  function chooseWallpaper(w: Wallpaper | null) {
+    setWallpaper(w);
+    try {
+      if (w) localStorage.setItem(`chat-wallpaper:${id}`, JSON.stringify(w));
+      else localStorage.removeItem(`chat-wallpaper:${id}`);
+    } catch {
+      /* storage full/blocked — wallpaper just won't persist */
+    }
+  }
+
+  async function uploadWallpaper(file: File) {
+    try {
+      const path = await uploadFile("media", file);
+      chooseWallpaper({ kind: "image", path });
+      toast.success("Wallpaper set");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not upload wallpaper");
+    }
+  }
+
 
   const conv = useQuery({
     queryKey: ["conversation", id],
@@ -235,8 +277,15 @@ function ConversationPage() {
           const body = await decryptStoredText(id, me.id, row.body);
           qc.setQueryData<Message[]>(["messages", id], [
             ...current,
-            { ...row, body, profiles: profile, message_deletes: [], message_views: [] },
+            { ...row, body, profiles: profile, message_deletes: [], message_views: [], message_deliveries: [] },
           ]);
+          // receipts: this device received the message, and an open chat means it was seen
+          void markDelivered([row as unknown as Message]);
+          void supabase
+            .from("conversation_members")
+            .update({ last_read_at: new Date().toISOString() })
+            .eq("conversation_id", id)
+            .eq("user_id", me.id);
         },
       )
       .on(
@@ -252,6 +301,28 @@ function ConversationPage() {
             ),
           );
           void qc.invalidateQueries({ queryKey: ["messages", id] });
+        },
+      )
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "message_deliveries" },
+        (payload) => {
+          const row = payload.new as { message_id: string; user_id: string };
+          qc.setQueryData<Message[]>(["messages", id], (cur) =>
+            (cur ?? []).map((m) =>
+              m.id === row.message_id && !(m.message_deliveries ?? []).some((d) => d.user_id === row.user_id)
+                ? { ...m, message_deliveries: [...(m.message_deliveries ?? []), { user_id: row.user_id }] }
+                : m,
+            ),
+          );
+        },
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "conversation_members", filter: `conversation_id=eq.${id}` },
+        () => {
+          // last_read_at moves when the other side reads — refreshes the seen ticks
+          void qc.invalidateQueries({ queryKey: ["conversation", id] });
         },
       )
       .subscribe();
