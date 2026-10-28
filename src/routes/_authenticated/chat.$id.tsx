@@ -157,6 +157,48 @@ function ConversationPage() {
   const chunksRef = useRef<Blob[]>([]);
   const recordStartRef = useRef(0);
   const call = useCall(id, me?.id);
+  const [wallpaperOpen, setWallpaperOpen] = useState(false);
+  const [wallpaper, setWallpaper] = useState<Wallpaper | null>(null);
+
+  // Wallpaper is a per-device preference, kept in localStorage per conversation.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(`chat-wallpaper:${id}`);
+      if (raw) setWallpaper(JSON.parse(raw) as Wallpaper);
+    } catch {
+      /* ignore corrupt value */
+    }
+  }, [id]);
+
+  const customWallpaperPath = wallpaper?.kind === "image" ? wallpaper.path : null;
+  const { data: wallpaperSrc } = useMediaSrc(customWallpaperPath ? "media" : null, customWallpaperPath);
+  const messagesStyle: CSSProperties =
+    wallpaper?.kind === "image" && wallpaperSrc
+      ? { backgroundImage: `url(${wallpaperSrc})`, backgroundSize: "cover", backgroundPosition: "center" }
+      : wallpaper?.kind === "preset"
+        ? (WALLPAPER_PRESETS.find((w) => w.id === wallpaper.id)?.style ?? {})
+        : {};
+
+  function chooseWallpaper(w: Wallpaper | null) {
+    setWallpaper(w);
+    try {
+      if (w) localStorage.setItem(`chat-wallpaper:${id}`, JSON.stringify(w));
+      else localStorage.removeItem(`chat-wallpaper:${id}`);
+    } catch {
+      /* storage full/blocked — wallpaper just won't persist */
+    }
+  }
+
+  async function uploadWallpaper(file: File) {
+    try {
+      const path = await uploadFile("media", file);
+      chooseWallpaper({ kind: "image", path });
+      toast.success("Wallpaper set");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not upload wallpaper");
+    }
+  }
+
 
   const conv = useQuery({
     queryKey: ["conversation", id],
@@ -235,8 +277,15 @@ function ConversationPage() {
           const body = await decryptStoredText(id, me.id, row.body);
           qc.setQueryData<Message[]>(["messages", id], [
             ...current,
-            { ...row, body, profiles: profile, message_deletes: [], message_views: [] },
+            { ...row, body, profiles: profile, message_deletes: [], message_views: [], message_deliveries: [] },
           ]);
+          // receipts: this device received the message, and an open chat means it was seen
+          void markDelivered([row as unknown as Message]);
+          void supabase
+            .from("conversation_members")
+            .update({ last_read_at: new Date().toISOString() })
+            .eq("conversation_id", id)
+            .eq("user_id", me.id);
         },
       )
       .on(
@@ -252,6 +301,28 @@ function ConversationPage() {
             ),
           );
           void qc.invalidateQueries({ queryKey: ["messages", id] });
+        },
+      )
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "message_deliveries" },
+        (payload) => {
+          const row = payload.new as { message_id: string; user_id: string };
+          qc.setQueryData<Message[]>(["messages", id], (cur) =>
+            (cur ?? []).map((m) =>
+              m.id === row.message_id && !(m.message_deliveries ?? []).some((d) => d.user_id === row.user_id)
+                ? { ...m, message_deliveries: [...(m.message_deliveries ?? []), { user_id: row.user_id }] }
+                : m,
+            ),
+          );
+        },
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "conversation_members", filter: `conversation_id=eq.${id}` },
+        () => {
+          // last_read_at moves when the other side reads — refreshes the seen ticks
+          void qc.invalidateQueries({ queryKey: ["conversation", id] });
         },
       )
       .subscribe();
@@ -343,7 +414,7 @@ function ConversationPage() {
         duration_seconds: duration,
         one_view: oneViewFlag,
       })
-      .select("*, profiles!messages_sender_id_fkey(*), message_deletes(user_id), message_views(user_id)")
+      .select("*, profiles!messages_sender_id_fkey(*), message_deletes(user_id), message_views(user_id), message_deliveries(user_id)")
       .single();
     if (error) {
       toast.error(error.message);
@@ -357,6 +428,19 @@ function ConversationPage() {
       qc.setQueryData<Message[]>(["messages", id], [...current, decrypted]);
     }
     qc.invalidateQueries({ queryKey: ["conversations"] });
+  }
+
+  /** Receipt: tells senders their message reached this device (drives the double tick). */
+  async function markDelivered(rows: Pick<Message, "id" | "sender_id">[]) {
+    if (!me) return;
+    const incoming = rows.filter((r) => r.sender_id !== me.id);
+    if (!incoming.length) return;
+    await supabase
+      .from("message_deliveries")
+      .upsert(incoming.map((r) => ({ message_id: r.id, user_id: me.id })), {
+        onConflict: "message_id,user_id",
+        ignoreDuplicates: true,
+      });
   }
 
   async function submitText(e: FormEvent) {
@@ -584,7 +668,7 @@ function ConversationPage() {
               </>
             ) : isDm ? (
               other ? (
-                chatBlocked ? "encrypted" : otherOnline ? "Online" : other.profiles.last_seen_at ? `Last seen ${lastSeen(other.profiles.last_seen_at)}` : "Offline"
+                chatBlocked ? "encrypted" : otherOnline ? "Online" : other.profiles.last_seen_at ? `Last seen ${formatLastSeen(other.profiles.last_seen_at)}` : "Offline"
               ) : (
                 "encrypted"
               )
@@ -616,6 +700,9 @@ function ConversationPage() {
                 <Pin className="h-4 w-4" /> Pin latest message
               </DropdownMenuItem>
             )}
+            <DropdownMenuItem onClick={() => setWallpaperOpen(true)}>
+              <Palette className="h-4 w-4" /> Chat wallpaper
+            </DropdownMenuItem>
             <DropdownMenuItem onClick={() => setConfirm("clear")}>
               <Eraser className="h-4 w-4" /> Clear chat
             </DropdownMenuItem>
@@ -663,7 +750,7 @@ function ConversationPage() {
       )}
 
       {/* messages */}
-      <div className="flex-1 space-y-2 overflow-y-auto px-4 py-4">
+      <div className="flex-1 space-y-2 overflow-y-auto px-4 py-4" style={messagesStyle}>
         {messages.isLoading && <p className="text-sm text-muted-foreground">Loading messages…</p>}
         {messages.data?.length === 0 && (
           <p className="py-10 text-center text-sm text-muted-foreground">
@@ -677,6 +764,7 @@ function ConversationPage() {
             mine={m.sender_id === me?.id}
             meId={me?.id ?? ""}
             premium={premium}
+            members={members}
             onDeleteForMe={deleteForMe}
             onDeleteForEveryone={deleteForEveryone}
           />
@@ -846,6 +934,52 @@ function ConversationPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={wallpaperOpen} onOpenChange={setWallpaperOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Chat wallpaper</DialogTitle>
+            <DialogDescription>Pick a background for this chat. Only you see it, on this device.</DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-3 gap-2">
+            {WALLPAPER_PRESETS.map((w) => (
+              <button
+                key={w.id}
+                type="button"
+                onClick={() =>
+                  chooseWallpaper(wallpaper?.kind === "preset" && wallpaper.id === w.id ? null : { kind: "preset", id: w.id })
+                }
+                className={cn(
+                  "flex h-16 items-end justify-start rounded-xl border border-border p-1.5 text-[11px] font-medium",
+                  wallpaper?.kind === "preset" && wallpaper.id === w.id && "ring-2 ring-gold",
+                )}
+                style={w.style}
+                aria-pressed={wallpaper?.kind === "preset" && wallpaper.id === w.id}
+              >
+                {w.label}
+              </button>
+            ))}
+            <label className="flex h-16 cursor-pointer items-center justify-center rounded-xl border border-dashed border-border text-[11px] text-muted-foreground hover:border-gold/60 hover:text-foreground">
+              Upload photo
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void uploadWallpaper(f);
+                }}
+              />
+            </label>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => chooseWallpaper(null)} disabled={!wallpaper}>
+              Remove wallpaper
+            </Button>
+            <Button onClick={() => setWallpaperOpen(false)}>Done</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -855,6 +989,7 @@ function MessageBubble({
   mine,
   meId,
   premium,
+  members,
   onDeleteForMe,
   onDeleteForEveryone,
 }: {
@@ -862,6 +997,7 @@ function MessageBubble({
   mine: boolean;
   meId: string;
   premium: boolean;
+  members: ConversationMember[];
   onDeleteForMe: (id: string) => void;
   onDeleteForEveryone: (id: string) => void;
 }) {
@@ -872,6 +1008,14 @@ function MessageBubble({
   const tombstone = message.deleted_for_everyone && !premium;
   const expired = !mine && message.one_view && viewedByMe && !premium;
   const locked = !mine && message.one_view && !viewed;
+
+  // WhatsApp-style receipt for my own messages: ✓ sent, ✓✓ delivered, gold ✓✓ seen
+  const others = members.filter((m) => m.user_id !== meId);
+  const deliveredCount = others.filter((o) => (message.message_deliveries ?? []).some((d) => d.user_id === o.user_id)).length;
+  const seenCount = others.filter(
+    (o) => o.last_read_at && new Date(o.last_read_at).getTime() >= new Date(message.created_at).getTime(),
+  ).length;
+  const receipt = tickState(others.length, deliveredCount, seenCount);
 
   async function openOneView() {
     setOpened(true);
@@ -895,7 +1039,7 @@ function MessageBubble({
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7 self-center opacity-0 transition-opacity group-hover:opacity-100"
+            className="h-7 w-7 self-center opacity-60 transition-opacity hover:opacity-100"
             aria-label="Message options"
           >
             <MoreHorizontal className="h-4 w-4" />
@@ -1048,10 +1192,22 @@ function MessageBubble({
             )}
           </>
         )}
-        <div className={cn("mt-0.5 text-right text-[10px]", mine ? "text-primary-foreground/70" : "text-muted-foreground")}>
+        <div className={cn("mt-0.5 flex items-center justify-end gap-1 text-[10px]", mine ? "text-primary-foreground/70" : "text-muted-foreground")}>
           {formatClockTime(message.created_at)}
+          {mine && <Ticks state={receipt} />}
         </div>
       </div>
     </div>
+  );
+}
+
+/** Sent / delivered / seen ticks for outgoing messages. Gold reads well in both themes. */
+function Ticks({ state }: { state: TickState }) {
+  if (state === "sent") return <Check className="h-3.5 w-3.5" aria-label="Sent" />;
+  return (
+    <CheckCheck
+      className={cn("h-3.5 w-3.5", state === "seen" && "text-gold")}
+      aria-label={state === "seen" ? "Seen" : "Delivered"}
+    />
   );
 }
