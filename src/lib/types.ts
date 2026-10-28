@@ -57,6 +57,7 @@ export interface Message {
   profiles: Profile;
   message_deletes: { user_id: string }[];
   message_views: { user_id: string }[];
+  message_deliveries: { user_id: string }[];
 }
 
 export interface PaymentRequest {

@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { useNavigate, createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
   Bell,
   BellOff,
+  Check,
+  CheckCheck,
   Download,
   Eye,
   FileText,
@@ -13,6 +15,7 @@ import {
   LogOut,
   Mic,
   MoreHorizontal,
+  Palette,
   Paperclip,
   Pin,
   Play,
@@ -28,10 +31,10 @@ import { usePremium } from "@/hooks/use-premium";
 import { useMediaSrc } from "@/hooks/use-media-url";
 import { uploadFile } from "@/lib/media";
 import { decryptStoredText, encryptText, migrateConversationHistory } from "@/lib/e2ee";
-import { oneViewReopenable } from "@/lib/chat-rules";
-import { formatClockTime, formatDuration, timeAgo } from "@/lib/format";
+import { oneViewReopenable, tickState, type TickState } from "@/lib/chat-rules";
+import { formatClockTime, formatDuration, formatLastSeen } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { Conversation, Message } from "@/lib/types";
+import type { Conversation, ConversationMember, Message } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -66,10 +69,40 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
-function lastSeen(iso: string): string {
-  const t = timeAgo(iso);
-  return t === "just now" || /\d{1,2} \w|\w{3} \d/.test(t) ? t : `${t} ago`;
-}
+type Wallpaper = { kind: "preset"; id: string } | { kind: "image"; path: string };
+
+const WALLPAPER_PRESETS: { id: string; label: string; style: CSSProperties }[] = [
+  {
+    id: "dots",
+    label: "Dots",
+    style: {
+      backgroundImage: "radial-gradient(hsl(var(--muted-foreground) / 0.18) 1px, transparent 1px)",
+      backgroundSize: "22px 22px",
+    },
+  },
+  {
+    id: "grid",
+    label: "Grid",
+    style: {
+      backgroundImage:
+        "linear-gradient(hsl(var(--muted-foreground) / 0.08) 1px, transparent 1px), linear-gradient(90deg, hsl(var(--muted-foreground) / 0.08) 1px, transparent 1px)",
+      backgroundSize: "26px 26px",
+    },
+  },
+  {
+    id: "glow",
+    label: "Soft glow",
+    style: {
+      backgroundImage:
+        "linear-gradient(160deg, hsl(var(--accent) / 0.6), transparent 55%), linear-gradient(20deg, hsl(var(--secondary) / 0.7), transparent 50%)",
+    },
+  },
+  {
+    id: "dusk",
+    label: "Dusk",
+    style: { backgroundImage: "linear-gradient(180deg, hsl(var(--gold) / 0.14), transparent 45%, hsl(var(--accent) / 0.45))" },
+  },
+];
 
 function TypingDots() {
   return (
@@ -144,7 +177,7 @@ function ConversationPage() {
     queryFn: async (): Promise<Message[]> => {
       const { data, error } = await supabase
         .from("messages")
-        .select("*, profiles!messages_sender_id_fkey(*), message_deletes(user_id), message_views(user_id)")
+        .select("*, profiles!messages_sender_id_fkey(*), message_deletes(user_id), message_views(user_id), message_deliveries(user_id)")
         .eq("conversation_id", id)
         .order("created_at", { ascending: true })
         .limit(300);
@@ -158,6 +191,7 @@ function ConversationPage() {
         if (r.one_view && !premium && r.sender_id !== mine && r.message_views?.some((v) => v.user_id === mine)) return false;
         return true;
       });
+      void markDelivered(visible);
       return Promise.all(visible.map(async (r) => ({ ...r, body: await decryptStoredText(id, mine, r.body) })));
     },
   });

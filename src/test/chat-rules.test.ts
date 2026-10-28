@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canDeleteForEveryone, isPremium, messageVisibleTo, oneViewReopenable } from "@/lib/chat-rules";
+import { canDeleteForEveryone, isPremium, messageVisibleTo, oneViewReopenable, tickState } from "@/lib/chat-rules";
 
 describe("chat rules", () => {
   it("premium is active only while the subscription is valid", () => {
@@ -24,5 +24,15 @@ describe("chat rules", () => {
     expect(oneViewReopenable(false, false)).toBe(true);
     expect(oneViewReopenable(true, false)).toBe(false);
     expect(oneViewReopenable(true, true)).toBe(true);
+  });
+
+  it("ticks progress sent → delivered → seen only when every other member qualifies", () => {
+    expect(tickState(1, 0, 0)).toBe("sent");
+    expect(tickState(1, 1, 0)).toBe("delivered");
+    expect(tickState(1, 1, 1)).toBe("seen");
+    // group: one of two members has not received it yet
+    expect(tickState(2, 1, 0)).toBe("sent");
+    expect(tickState(2, 2, 1)).toBe("delivered");
+    expect(tickState(2, 2, 2)).toBe("seen");
   });
 });

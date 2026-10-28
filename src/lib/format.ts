@@ -31,6 +31,18 @@ export function formatClockTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
 
+/** WhatsApp-style last seen: "today at 7:30 PM", "yesterday at 3:15 PM", "Oct 26 at 9:02 AM". */
+export function formatLastSeen(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  if (d.toDateString() === now.toDateString()) return `today at ${time}`;
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (d.toDateString() === yesterday.toDateString()) return `yesterday at ${time}`;
+  return `${d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: d.getFullYear() === now.getFullYear() ? undefined : "numeric" })} at ${time}`;
+}
+
 /** Split a caption into text and #hashtag tokens for rendering. */
 export function parseHashtags(caption: string): { text: string; hashtag: boolean }[] {
   return caption.split(/(\s+)/).map((token) => {
