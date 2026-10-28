@@ -141,6 +141,13 @@
       "when": 1793155057846,
       "tag": "0019_developer_role_and_member_discovery",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1793156096948,
+      "tag": "0020_message_deliveries",
+      "breakpoints": true
     }
   ]
 }
