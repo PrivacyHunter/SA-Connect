@@ -506,3 +506,18 @@ export async function migrateConversationHistory(conversationId: string, meId: s
     return 0;
   }
 }
+
+/**
+ * One-stop key setup for a fresh sign-in: recover the escrowed key pair when
+ * one exists, otherwise generate keys and create the escrow. Repairs a stale
+ * escrow (e.g. after a password change) on the next sign-in.
+ */
+export async function setupKeysAfterSignIn(userId: string, password: string): Promise<void> {
+  try {
+    if (await recoverPrivateKeyFromEscrow(userId, password)) return;
+    await ensureMyKeys(userId);
+    await escrowPrivateKey(userId, password);
+  } catch {
+    // E2EE setup is best-effort; chat falls back to the no-key path.
+  }
+}
