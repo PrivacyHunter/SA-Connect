@@ -5,10 +5,13 @@ import { supabase } from "@/integrations/supabase/client";
  * End-to-end encryption for chat text.
  *
  * Every user holds an ECDH P-256 key pair; the private key never leaves the
- * browser (localStorage). Each conversation has a random AES-GCM conversation
- * key which is wrapped (encrypted) for every member with the pairwise ECDH
- * key, stored in `conversation_keys`. Message bodies are stored as
- * "enc:<iv-b64>:<ciphertext-b64>" and can only be decrypted by conversation
+ * browser in plaintext — localStorage holds the working copy and a second
+ * copy is escrowed on the profile, encrypted with a key derived from the
+ * user's login password, so a brand-new device can recover the same key pair
+ * and keep decrypting history. Each conversation has a random AES-GCM
+ * conversation key which is wrapped (encrypted) for every member with the
+ * pairwise ECDH key, stored in `conversation_keys`. Message bodies are stored
+ * as "enc:<iv-b64>:<ciphertext-b64>" and can only be decrypted by conversation
  * members holding their private key.
  */
 
@@ -66,7 +69,6 @@ export function ensureMyKeys(userId: string): Promise<void> {
           stored = localStorage.getItem(privStore(userId));
         }
         const jwk = JSON.parse(stored!) as JsonWebKey;
-        console.debug("[e2ee] my priv pub-x", jwk.x?.slice(0, 8), "user", userId.slice(0, 8));
         const pubJwk = JSON.stringify({ kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y, ext: true });
         const { data } = await supabase.from("profiles").select("public_key").eq("id", userId).maybeSingle();
         if (data && data.public_key !== pubJwk) {
@@ -125,10 +127,96 @@ function myPublicJwk(userId: string): JsonWebKey | null {
   }
 }
 
+// ---- Password escrow -------------------------------------------------------
+// The private JWK is stored on the profile encrypted under a PBKDF2 key
+// derived from the login password. A new device recovers the SAME key pair
+// at sign-in instead of generating a fresh one, so all existing wraps and
+// history stay readable. Losing the password loses the escrow — the same
+// trade-off as any password-protected backup.
+
+const PBKDF2_ITERATIONS = 150_000;
+
+async function passwordKEK(password: string, salt: Uint8Array<ArrayBuffer>): Promise<CryptoKey> {
+  const base = await subtle().importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, [
+    "deriveKey",
+  ]);
+  return subtle().deriveKey(
+    { name: "PBKDF2", salt, iterations: PBKDF2_ITERATIONS, hash: "SHA-256" },
+    base,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"],
+  );
+}
+
+/** Encrypts the local private key with the login password and stores it on the profile. */
+export async function escrowPrivateKey(userId: string, password: string): Promise<boolean> {
+  try {
+    const jwk = localStorage.getItem(privStore(userId));
+    if (!jwk || !password) return false;
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const kek = await passwordKEK(password, salt);
+    const ct = await subtle().encrypt({ name: "AES-GCM", iv }, kek, new TextEncoder().encode(jwk));
+    const payload = JSON.stringify({ v: 1, salt: toB64(salt), iv: toB64(iv), ct: toB64(ct) });
+    const { error } = await supabase
+      .from("profiles")
+      .update({ encrypted_private_key: payload })
+      .eq("id", userId);
+    return !error;
+  } catch {
+    return false;
+  }
+}
+
+function hasEscrowColumn(data: { encrypted_private_key?: unknown } | null): boolean {
+  return typeof data?.encrypted_private_key === "string" && data.encrypted_private_key.length > 0;
+}
+
+async function fetchEscrow(userId: string): Promise<string | null> {
+  const { data } = await supabase
+    .from("profiles")
+    .select("encrypted_private_key")
+    .eq("id", userId)
+    .maybeSingle();
+  return hasEscrowColumn(data as { encrypted_private_key?: unknown } | null)
+    ? ((data as { encrypted_private_key: string }).encrypted_private_key)
+    : null;
+}
+
+/**
+ * Recovers the escrowed private key with the login password. Only runs while
+ * there is no local key yet (a device that already holds a key keeps it).
+ * Returns true when the local store now holds a usable private key.
+ */
+export async function recoverPrivateKeyFromEscrow(userId: string, password: string): Promise<boolean> {
+  try {
+    if (localStorage.getItem(privStore(userId)) || !password) return false;
+    const raw = await fetchEscrow(userId);
+    if (!raw) return false;
+    const payload = JSON.parse(raw) as { salt: string; iv: string; ct: string };
+    const kek = await passwordKEK(password, fromB64(payload.salt));
+    const plain = await subtle().decrypt(
+      { name: "AES-GCM", iv: fromB64(payload.iv) },
+      kek,
+      fromB64(payload.ct),
+    );
+    const jwk = JSON.parse(new TextDecoder().decode(plain)) as JsonWebKey;
+    if (!jwk.d || !jwk.x || !jwk.y) return false;
+    localStorage.setItem(privStore(userId), JSON.stringify(jwk));
+    // Drop memoized key promises so every path picks up the recovered key.
+    ensureMemo.delete(userId);
+    privCache.delete(userId);
+    pairCache.clear();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const pairCache = new Map<string, Promise<CryptoKey>>();
 async function pairKey(userId: string, peerJwk: JsonWebKey): Promise<CryptoKey> {
   const cacheKey = `${userId}:${peerJwk.x}:${peerJwk.y}`;
-  console.debug("[e2ee] pairKey me", userId.slice(0, 8), "peer-x", peerJwk.x?.slice(0, 8));
   let p = pairCache.get(cacheKey);
   if (!p) {
     const pub = await subtle().importKey("jwk", peerJwk, ECDH, false, []);
@@ -183,13 +271,11 @@ async function memberPublicKeys(conversationId: string): Promise<Map<string, Jso
     .from("conversation_members")
     .select("user_id, profiles(public_key)")
     .eq("conversation_id", conversationId);
-  if (error) console.debug("[e2ee] members query error", error.message);
   const map = new Map<string, JsonWebKey | null>();
   for (const row of (data ?? []) as { user_id: string; profiles: { public_key: string | null } | null }[]) {
     const raw = row.profiles?.public_key ?? null;
     map.set(row.user_id, raw ? (JSON.parse(raw) as JsonWebKey) : null);
   }
-  console.debug("[e2ee] members for", conversationId.slice(0, 8), [...map.entries()].map(([u, k]) => `${u.slice(0, 8)}:${k ? k.x?.slice(0, 6) : "null"}`).join(" "));
   return map;
 }
 
@@ -205,7 +291,6 @@ async function unwrapKey(
     const raw = await subtle().decrypt({ name: "AES-GCM", iv: packed.iv }, pk, packed.data);
     return await subtle().importKey("raw", raw, { name: "AES-GCM" }, true, ["encrypt", "decrypt"]);
   } catch (err) {
-    console.debug("[e2ee] unwrap error", (err as Error)?.name, (err as Error)?.message);
     return null;
   }
 }
@@ -218,7 +303,6 @@ export async function getConversationKey(conversationId: string, meId: string): 
     await ensureMyKeysOnce(meId);
     const members = await memberPublicKeys(conversationId);
     if (!members.has(meId)) {
-      console.debug("[e2ee] not a member of", conversationId.slice(0, 8), "as", meId.slice(0, 8));
       return null; // not a member of this conversation
     }
     const { data: conv } = await supabase
@@ -227,7 +311,6 @@ export async function getConversationKey(conversationId: string, meId: string): 
       .eq("id", conversationId)
       .maybeSingle();
     const creatorId = (conv as { created_by: string | null } | null)?.created_by ?? meId;
-    console.debug("[e2ee] derive conv", conversationId.slice(0, 8), "me", meId.slice(0, 8), "creator", creatorId.slice(0, 8));
 
     const fetchRows = async () =>
       (
@@ -245,7 +328,6 @@ export async function getConversationKey(conversationId: string, meId: string): 
     for (let i = 0; i < attempts; i++) {
       if (i > 0) await new Promise((r) => setTimeout(r, 900));
       const rows = await fetchRows();
-      console.debug("[e2ee] attempt", i, "rows", (rows ?? []).length, "for", meId.slice(0, 8));
       // Newest wrap first: after a key rotation everyone converges on the latest key.
       for (const row of (rows ?? []) as { wrapped_by: string; wrapped_key: string; wrapper_public_key: string | null }[]) {
         // The wrap was created with the wrapper's key pair AT WRAP TIME —
@@ -256,16 +338,13 @@ export async function getConversationKey(conversationId: string, meId: string): 
           : members.get(row.wrapped_by);
         if (peer) {
           const key = await unwrapKey(meId, peer, row.wrapped_key);
-          console.debug("[e2ee] unwrap from", row.wrapped_by.slice(0, 8), key ? "OK" : "FAIL");
           if (key) return key;
         } else {
-          console.debug("[e2ee] no peer key for wrapper", row.wrapped_by.slice(0, 8));
         }
       }
     }
     // No row could be unwrapped (e.g. the member's browser keys changed):
     // rotate — create a fresh conversation key and re-wrap it for everyone.
-    console.debug("[e2ee] rotate fallback for", meId.slice(0, 8));
     const raw = crypto.getRandomValues(new Uint8Array(32));
     const key = await subtle().importKey("raw", raw, { name: "AES-GCM" }, true, ["encrypt", "decrypt"]);
     const myPub = myPublicJwk(meId);
@@ -281,7 +360,6 @@ export async function getConversationKey(conversationId: string, meId: string): 
         // member has no usable key yet
       }
     }
-    console.debug("[e2ee] rotation inserts", inserts.length, "targets", inserts.map((r) => r.user_id.slice(0, 8)).join(","));
     if (inserts.length) {
       // Insert, never upsert on (conversation_id, user_id, wrapped_by): a
       // member rotating twice would otherwise overwrite their previous
@@ -293,7 +371,6 @@ export async function getConversationKey(conversationId: string, meId: string): 
       if (error) {
         // Never keep a key that nobody else can obtain — future messages
         // encrypted with it would be unreadable for every other member.
-        console.debug("[e2ee] rotation insert error", error.message);
         convKeyCache.delete(conversationId);
         return null;
       }
@@ -410,9 +487,23 @@ export async function migrateConversationHistory(conversationId: string, meId: s
     }
     // Tell everyone a history migration happened so open pages re-decrypt.
     if (migrated > 0) broadcastRotation(conversationId);
-    console.debug("[e2ee] history migrated", migrated, "messages in", conversationId.slice(0, 8));
     return migrated;
   } catch {
     return 0;
+  }
+}
+
+/**
+ * One-stop key setup for a fresh sign-in: recover the escrowed key pair when
+ * one exists, otherwise generate keys and create the escrow. Repairs a stale
+ * escrow (e.g. after a password change) on the next sign-in.
+ */
+export async function setupKeysAfterSignIn(userId: string, password: string): Promise<void> {
+  try {
+    if (await recoverPrivateKeyFromEscrow(userId, password)) return;
+    await ensureMyKeys(userId);
+    await escrowPrivateKey(userId, password);
+  } catch {
+    // E2EE setup is best-effort; chat falls back to the no-key path.
   }
 }

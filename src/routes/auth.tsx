@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { isDisposableEmail, passwordProblems } from "@/lib/signup-rules";
+import { setupKeysAfterSignIn } from "@/lib/e2ee";
 import { createFileRoute, useSearch, useNavigate } from "@tanstack/react-router";
 import { supabase } from "@/integrations/supabase/client";
 import { lovable } from "@/integrations/lovable/index";
@@ -79,6 +80,10 @@ export function AuthPage() {
       if (mode === "signin") {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
+        // Recover or escrow the E2EE key pair with the login password before
+        // any chat page loads, so a new device keeps decrypting history.
+        const { data: auth } = await supabase.auth.getUser();
+        if (auth.user) await setupKeysAfterSignIn(auth.user.id, password);
         navigate({ to: after, replace: true });
       } else {
         if (isDisposableEmail(email)) throw new Error("Temporary or disposable email addresses are not allowed. Use your real email.");
@@ -99,6 +104,7 @@ export function AuthPage() {
         if (!data.session) {
           setNotice("Account created! Check your email inbox and click the confirmation link, then sign in here.");
         } else {
+          if (data.user) await setupKeysAfterSignIn(data.user.id, password);
           navigate({ to: after, replace: true });
         }
       }
