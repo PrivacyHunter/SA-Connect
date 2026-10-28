@@ -45,7 +45,7 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { UserAvatar } from "@/components/user-avatar";
-import { CallOverlay, useCall } from "@/components/call-overlay";
+import { useCallEngine } from "@/lib/call-engine";
 import { Ban, Eraser, Flag, Phone, ShieldAlert, Video } from "lucide-react";
 import { useIsOnline } from "@/lib/presence";
 import { useChatActivity } from "@/hooks/use-chat-activity";
@@ -125,6 +125,9 @@ function RecordingBars() {
 }
 
 export const Route = createFileRoute("/_authenticated/chat/$id")({
+  validateSearch: (search: Record<string, unknown>): { call?: "voice" | "video" } => ({
+    call: search.call === "video" || search.call === "voice" ? search.call : undefined,
+  }),
   head: () => ({
     meta: [
       { title: "Conversation — SA Connect" },
@@ -156,7 +159,7 @@ function ConversationPage() {
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const recordStartRef = useRef(0);
-  const call = useCall(id, me?.id);
+  const call = useCallEngine();
   const [wallpaperOpen, setWallpaperOpen] = useState(false);
   const [wallpaper, setWallpaper] = useState<Wallpaper | null>(null);
 
@@ -398,6 +401,17 @@ function ConversationPage() {
   const activityLabel = !activityKind
     ? null
     : `${isDm ? "" : activityNames.join(", ") + " "}${activityKind === "recording" ? "recording voice…" : "typing…"}`.trim();
+
+  // Auto-start a call when the chat is opened from the Calls page (?call=voice|video).
+  const autoCall = Route.useSearch({ select: (s) => s.call });
+  const autoStartedRef = useRef(false);
+  useEffect(() => {
+    if (!autoCall || autoStartedRef.current || !me || !isDm || !other || chatBlocked) return;
+    if (call.status !== "idle") return;
+    autoStartedRef.current = true;
+    void call.start(id, other.user_id, other.profiles.display_name, autoCall === "video");
+    void navigate({ to: "/chat/$id", params: { id }, search: {}, replace: true });
+  }, [autoCall, me, isDm, other, chatBlocked, call, id, navigate]);
 
   async function send(kind: Message["kind"], body: string | null, mediaUrl: string | null, fileName: string | null, duration: number | null, oneViewFlag = oneView) {
     if (!me) return;
@@ -677,13 +691,28 @@ function ConversationPage() {
             )}
           </p>
         </div>
-        <Button variant="ghost" size="icon" aria-label="Voice call" onClick={() => call.start(false)}>
-          <Phone className="h-5 w-5" />
-        </Button>
-        <Button variant="ghost" size="icon" aria-label="Video call" onClick={() => call.start(true)}>
-          <Video className="h-5 w-5" />
-        </Button>
-        <CallOverlay call={call} title={title ?? "Call"} />
+        {isDm && other && !chatBlocked && (
+          <>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Voice call"
+              disabled={call.status !== "idle"}
+              onClick={() => call.start(id, other.user_id, other.profiles.display_name, false)}
+            >
+              <Phone className="h-5 w-5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Video call"
+              disabled={call.status !== "idle"}
+              onClick={() => call.start(id, other.user_id, other.profiles.display_name, true)}
+            >
+              <Video className="h-5 w-5" />
+            </Button>
+          </>
+        )}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="icon" aria-label="Options">
