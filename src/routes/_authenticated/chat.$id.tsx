@@ -934,6 +934,52 @@ function ConversationPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={wallpaperOpen} onOpenChange={setWallpaperOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Chat wallpaper</DialogTitle>
+            <DialogDescription>Pick a background for this chat. Only you see it, on this device.</DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-3 gap-2">
+            {WALLPAPER_PRESETS.map((w) => (
+              <button
+                key={w.id}
+                type="button"
+                onClick={() =>
+                  chooseWallpaper(wallpaper?.kind === "preset" && wallpaper.id === w.id ? null : { kind: "preset", id: w.id })
+                }
+                className={cn(
+                  "flex h-16 items-end justify-start rounded-xl border border-border p-1.5 text-[11px] font-medium",
+                  wallpaper?.kind === "preset" && wallpaper.id === w.id && "ring-2 ring-gold",
+                )}
+                style={w.style}
+                aria-pressed={wallpaper?.kind === "preset" && wallpaper.id === w.id}
+              >
+                {w.label}
+              </button>
+            ))}
+            <label className="flex h-16 cursor-pointer items-center justify-center rounded-xl border border-dashed border-border text-[11px] text-muted-foreground hover:border-gold/60 hover:text-foreground">
+              Upload photo
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void uploadWallpaper(f);
+                }}
+              />
+            </label>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => chooseWallpaper(null)} disabled={!wallpaper}>
+              Remove wallpaper
+            </Button>
+            <Button onClick={() => setWallpaperOpen(false)}>Done</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -943,6 +989,7 @@ function MessageBubble({
   mine,
   meId,
   premium,
+  members,
   onDeleteForMe,
   onDeleteForEveryone,
 }: {
@@ -950,6 +997,7 @@ function MessageBubble({
   mine: boolean;
   meId: string;
   premium: boolean;
+  members: ConversationMember[];
   onDeleteForMe: (id: string) => void;
   onDeleteForEveryone: (id: string) => void;
 }) {
@@ -960,6 +1008,14 @@ function MessageBubble({
   const tombstone = message.deleted_for_everyone && !premium;
   const expired = !mine && message.one_view && viewedByMe && !premium;
   const locked = !mine && message.one_view && !viewed;
+
+  // WhatsApp-style receipt for my own messages: ✓ sent, ✓✓ delivered, gold ✓✓ seen
+  const others = members.filter((m) => m.user_id !== meId);
+  const deliveredCount = others.filter((o) => (message.message_deliveries ?? []).some((d) => d.user_id === o.user_id)).length;
+  const seenCount = others.filter(
+    (o) => o.last_read_at && new Date(o.last_read_at).getTime() >= new Date(message.created_at).getTime(),
+  ).length;
+  const receipt = tickState(others.length, deliveredCount, seenCount);
 
   async function openOneView() {
     setOpened(true);
@@ -983,7 +1039,7 @@ function MessageBubble({
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7 self-center opacity-0 transition-opacity group-hover:opacity-100"
+            className="h-7 w-7 self-center opacity-60 transition-opacity hover:opacity-100"
             aria-label="Message options"
           >
             <MoreHorizontal className="h-4 w-4" />
@@ -1136,10 +1192,22 @@ function MessageBubble({
             )}
           </>
         )}
-        <div className={cn("mt-0.5 text-right text-[10px]", mine ? "text-primary-foreground/70" : "text-muted-foreground")}>
+        <div className={cn("mt-0.5 flex items-center justify-end gap-1 text-[10px]", mine ? "text-primary-foreground/70" : "text-muted-foreground")}>
           {formatClockTime(message.created_at)}
+          {mine && <Ticks state={receipt} />}
         </div>
       </div>
     </div>
+  );
+}
+
+/** Sent / delivered / seen ticks for outgoing messages. Gold reads well in both themes. */
+function Ticks({ state }: { state: TickState }) {
+  if (state === "sent") return <Check className="h-3.5 w-3.5" aria-label="Sent" />;
+  return (
+    <CheckCheck
+      className={cn("h-3.5 w-3.5", state === "seen" && "text-gold")}
+      aria-label={state === "seen" ? "Seen" : "Delivered"}
+    />
   );
 }
