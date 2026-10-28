@@ -128,6 +128,20 @@ export interface ReelComment {
   profiles: Profile;
 }
 
+export interface CallLog {
+  id: string;
+  conversation_id: string;
+  caller_id: string;
+  callee_id: string;
+  kind: "voice" | "video";
+  status: "ringing" | "answered" | "missed" | "declined" | "cancelled";
+  duration_seconds: number;
+  created_at: string;
+  updated_at: string;
+  caller: Profile;
+  callee: Profile;
+}
+
 export interface Video {
   id: string;
   channel_id: string;
