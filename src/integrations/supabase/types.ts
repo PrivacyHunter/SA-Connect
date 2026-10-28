@@ -827,6 +827,7 @@ export type Database = {
           bio: string
           created_at: string
           display_name: string
+          encrypted_private_key: string | null
           id: string
           last_seen_at: string | null
           public_key: string | null
@@ -839,6 +840,7 @@ export type Database = {
           bio?: string
           created_at?: string
           display_name: string
+          encrypted_private_key?: string | null
           id: string
           last_seen_at?: string | null
           public_key?: string | null
@@ -851,6 +853,7 @@ export type Database = {
           bio?: string
           created_at?: string
           display_name?: string
+          encrypted_private_key?: string | null
           id?: string
           last_seen_at?: string | null
           public_key?: string | null
@@ -1404,6 +1407,7 @@ export type Database = {
           bio: string
           created_at: string
           display_name: string
+          encrypted_private_key: string | null
           id: string
           last_seen_at: string | null
           public_key: string | null
@@ -1425,6 +1429,7 @@ export type Database = {
           bio: string
           created_at: string
           display_name: string
+          encrypted_private_key: string | null
           id: string
           last_seen_at: string | null
           public_key: string | null

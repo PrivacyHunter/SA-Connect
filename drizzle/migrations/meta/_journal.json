@@ -148,6 +148,13 @@
       "when": 1793156096948,
       "tag": "0020_message_deliveries",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1793157862416,
+      "tag": "0021_add_profile_key_escrow",
+      "breakpoints": true
     }
   ]
 }
