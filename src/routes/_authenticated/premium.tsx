@@ -31,6 +31,7 @@ function PremiumPage() {
   const qc = useQueryClient();
   const { data: settings } = useQuery(siteSettingsQuery);
   const [file, setFile] = useState<File | null>(null);
+  const [trx, setTrx] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -55,12 +56,17 @@ function PremiumPage() {
       toast.error("Attach your payment screenshot");
       return;
     }
+    if (!trx.trim()) {
+      toast.error("Enter your transaction (TRX) ID");
+      return;
+    }
     setBusy(true);
     try {
       const path = await uploadFile("payments", file);
+      const note = `TRX: ${trx.trim()}${noteExtra ? ` · ${noteExtra.trim()}` : ""}`;
       const { error } = await supabase
         .from("payment_requests")
-        .insert({ user_id: me.id, screenshot_path: path, note: note.trim() || null });
+        .insert({ user_id: me.id, screenshot_path: path, note });
       if (error) throw error;
       toast.success("Proof uploaded — access is granted after approval");
       setFile(null);
