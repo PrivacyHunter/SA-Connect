@@ -493,6 +493,26 @@ function ConversationPage() {
     qc.invalidateQueries({ queryKey: ["conversations"] });
   }
 
+  function insertEmoji(emoji: string) {
+    setText((t) => t + emoji);
+    setActivity("typing");
+  }
+
+  async function sendSticker(kind: "sticker" | "gif", url: string) {
+    setPickerOpen(false);
+    await send(kind, null, url, null, null, false);
+  }
+
+  async function saveSticker(mediaPath: string) {
+    if (!me) return;
+    const { error } = await supabase.from("sticker_favorites").insert({ user_id: me.id, media_path: mediaPath });
+    if (error && error.code !== "23505") {
+      toast.error(error.message);
+      return;
+    }
+    toast.success("Sticker saved to favorites");
+  }
+
   /** Receipt: tells senders their message reached this device (drives the double tick). */
   async function markDelivered(rows: Pick<Message, "id" | "sender_id">[]) {
     if (!me) return;
