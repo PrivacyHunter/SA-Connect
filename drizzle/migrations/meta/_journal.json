@@ -183,6 +183,20 @@
       "when": 1793262816387,
       "tag": "0025_conversations_members_only_read",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1793264455834,
+      "tag": "0026_chat_delete_contacts_privacy",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1793264485334,
+      "tag": "0027_contacts_profile_visibility",
+      "breakpoints": true
     }
   ]
 }
