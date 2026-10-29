@@ -1217,10 +1217,8 @@ function MessageBubble({
       <div
         className={cn(
           "max-w-[75%] rounded-2xl text-sm",
-          (message.kind === "sticker" || message.kind === "gif") && !tombstone && !expired && !locked
-            ? "px-0 py-0"
-            : "px-3.5 py-2",
-          !((message.kind === "sticker" || message.kind === "gif") && !tombstone && !expired && !locked) &&
+          stickerish ? "px-0 py-0" : "px-3.5 py-2",
+          !stickerish &&
             (mine
               ? "rounded-br-md bg-primary text-primary-foreground"
               : "rounded-bl-md border border-border bg-card"),
