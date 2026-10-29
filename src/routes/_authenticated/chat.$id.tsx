@@ -1197,6 +1197,11 @@ function MessageBubble({
           <DropdownMenuItem onClick={() => onDeleteForMe(message.id)}>
             <Trash2 className="h-4 w-4" /> Delete for me
           </DropdownMenuItem>
+          {message.kind === "sticker" && message.media_url && !tombstone && !expired && !locked && (
+            <DropdownMenuItem onClick={() => onSaveSticker(message.media_url!)}>
+              <Heart className="h-4 w-4" /> Save sticker
+            </DropdownMenuItem>
+          )}
           {mine && !message.deleted_for_everyone && (
             <DropdownMenuItem
               className="text-destructive focus:text-destructive"
