@@ -45,7 +45,8 @@ function ChatListPage() {
     queryFn: async (): Promise<Conversation[]> => {
       const { data, error } = await supabase
         .from("conversations")
-        .select("*, conversation_members(user_id, last_read_at, muted, profiles(*))")
+        .select("*, conversation_members!inner(user_id, last_read_at, muted, profiles(*))")
+        .eq("conversation_members.user_id", me?.id ?? "")
         .order("last_message_at", { ascending: false, nullsFirst: false });
       if (error) throw error;
       const rows = (data ?? []) as Conversation[];
