@@ -47,7 +47,7 @@ export interface Message {
   conversation_id: string;
   sender_id: string;
   body: string | null;
-  kind: "text" | "image" | "file" | "voice";
+  kind: "text" | "image" | "file" | "voice" | "sticker" | "gif";
   media_url: string | null;
   file_name: string | null;
   duration_seconds: number | null;

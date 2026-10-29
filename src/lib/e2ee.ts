@@ -228,6 +228,50 @@ async function pairKey(userId: string, peerJwk: JsonWebKey): Promise<CryptoKey> 
 
 const convKeyCache = new Map<string, Promise<CryptoKey | null>>();
 
+// ---- Per-device keyring -----------------------------------------------------
+// Every conversation key this device has ever successfully derived is kept
+// (wrapped nowhere — AES raw keys in localStorage, per conversation). Old
+// messages stay readable on this device even after the live key rotates or a
+// peer re-wraps history, instead of degrading to "(encrypted message)".
+const KEYRING_CAP = 80;
+const keyringStore = (conversationId: string) => `sa-e2ee-ring-${conversationId}`;
+
+function loadKeyring(conversationId: string): string[] {
+  try {
+    const raw = localStorage.getItem(keyringStore(conversationId));
+    const parsed = raw ? (JSON.parse(raw) as unknown) : [];
+    return Array.isArray(parsed) ? parsed.filter((k): k is string => typeof k === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberKey(conversationId: string, key: CryptoKey): void {
+  void subtle()
+    .exportKey("raw", key)
+    .then((buf) => {
+      const raw = toB64(buf);
+      const ring = loadKeyring(conversationId).filter((k) => k !== raw);
+      ring.push(raw);
+      while (ring.length > KEYRING_CAP) ring.shift();
+      localStorage.setItem(keyringStore(conversationId), JSON.stringify(ring));
+    })
+    .catch(() => undefined);
+}
+
+/** Builds AES keys from the device keyring, newest first. */
+async function keyringKeys(conversationId: string): Promise<CryptoKey[]> {
+  const out: CryptoKey[] = [];
+  for (const raw of loadKeyring(conversationId).reverse()) {
+    try {
+      out.push(await subtle().importKey("raw", fromB64(raw), { name: "AES-GCM" }, true, ["encrypt", "decrypt"]));
+    } catch {
+      // skip corrupt ring entries
+    }
+  }
+  return out;
+}
+
 // Live convergence: when a member rotates the conversation key (e.g. after
 // signing in on a new device), every other open page re-derives immediately
 // instead of staying on the stale cached key until a reload.
