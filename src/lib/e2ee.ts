@@ -507,6 +507,7 @@ export async function migrateConversationHistory(conversationId: string, meId: s
       .eq("user_id", meId);
     // Older generations only. The device keyring counts too — a key this
     // device derived once can always migrate history it can still decrypt.
+    const candidates = new Map<string, CryptoKey>();
     const ringKeys = await keyringKeys(conversationId);
     const ringRaws = new Set<string>();
     for (const k of ringKeys) {
