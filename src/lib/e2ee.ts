@@ -505,11 +505,8 @@ export async function migrateConversationHistory(conversationId: string, meId: s
       .select("wrapped_by, wrapped_key, wrapper_public_key")
       .eq("conversation_id", conversationId)
       .eq("user_id", meId);
-    // Older generations only: every key that is not the current one.
-    const candidates = new Map<string, CryptoKey>();
-    // Older generations only: every key that is not the current one. The
-    // device keyring counts too — a key this device derived once can always
-    // migrate history it can still decrypt.
+    // Older generations only. The device keyring counts too — a key this
+    // device derived once can always migrate history it can still decrypt.
     const ringKeys = await keyringKeys(conversationId);
     const ringRaws = new Set<string>();
     for (const k of ringKeys) {
