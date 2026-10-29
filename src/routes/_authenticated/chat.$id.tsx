@@ -642,9 +642,13 @@ function ConversationPage() {
         ? last.body
         : last.kind === "image"
           ? "📷 Photo"
-          : last.kind === "voice"
-            ? "🎤 Voice note"
-            : `📎 ${last.file_name ?? "File"}`;
+          : last.kind === "sticker"
+            ? "🖼️ Sticker"
+            : last.kind === "gif"
+              ? "GIF"
+              : last.kind === "voice"
+                ? "🎤 Voice note"
+                : `📎 ${last.file_name ?? "File"}`;
     const { error } = await supabase
       .from("conversations")
       .update({ pinned_body: body, pinned_at: last.created_at })
@@ -751,7 +755,7 @@ function ConversationPage() {
               </>
             ) : isDm ? (
               other ? (
-                chatBlocked ? "encrypted" : otherOnline ? "Online" : other.profiles.last_seen_at ? `Last seen ${formatLastSeen(other.profiles.last_seen_at)}` : "Offline"
+                chatBlocked ? "encrypted" : otherOnline ? "Online" : other.profiles.last_seen_at ? `Last seen ${formatLastSeen(other.profiles.last_seen_at)}` : "Last seen a while ago"
               ) : (
                 "encrypted"
               )
@@ -955,6 +959,27 @@ function ConversationPage() {
           </div>
         ) : canPost ? (
           <>
+            {me && (
+              <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label="Emoji, stickers and GIFs"
+                    disabled={recording}
+                  >
+                    <SmilePlus className={cn("h-5 w-5", pickerOpen && "text-gold")} />
+                  </Button>
+                </PopoverTrigger>
+                <ChatPicker
+                  meId={me.id}
+                  onEmoji={insertEmoji}
+                  onSticker={(p) => void sendSticker("sticker", p)}
+                  onGif={(u) => void sendSticker("gif", u)}
+                />
+              </Popover>
+            )}
             <input type="file" accept="image/*,video/*" className="hidden" id={`img-${id}`} onChange={(e) => { const f = e.target.files?.[0]; if (f) pickFile(f); }} />
             <input type="file" className="hidden" id={`file-${id}`} onChange={(e) => { const f = e.target.files?.[0]; if (f) pickFile(f); }} />
             <Button type="button" variant="ghost" size="icon" asChild>
