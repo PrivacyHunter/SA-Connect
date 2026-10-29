@@ -507,6 +507,18 @@ export async function migrateConversationHistory(conversationId: string, meId: s
       .eq("user_id", meId);
     // Older generations only: every key that is not the current one.
     const candidates = new Map<string, CryptoKey>();
+    // Older generations only: every key that is not the current one. The
+    // device keyring counts too — a key this device derived once can always
+    // migrate history it can still decrypt.
+    const ringKeys = await keyringKeys(conversationId);
+    const ringRaws = new Set<string>();
+    for (const k of ringKeys) {
+      const raw = toB64(await subtle().exportKey("raw", k));
+      if (raw !== currentRaw) {
+        candidates.set(raw, k);
+        ringRaws.add(raw);
+      }
+    }
     for (const row of (keyRows ?? []) as { wrapped_by: string; wrapped_key: string; wrapper_public_key: string | null }[]) {
       // Prefer the wrapper's at-wrap-time public key stored on the row; the
       // wrapper may have since rotated their browser key pair.
@@ -517,7 +529,7 @@ export async function migrateConversationHistory(conversationId: string, meId: s
       const k = await unwrapKey(meId, peer, row.wrapped_key);
       if (!k) continue;
       const raw = toB64(await subtle().exportKey("raw", k));
-      if (raw !== currentRaw) candidates.set(raw, k);
+      if (raw !== currentRaw && !ringRaws.has(raw)) candidates.set(raw, k);
     }
     if (!candidates.size) return 0;
 
