@@ -382,7 +382,10 @@ export async function getConversationKey(conversationId: string, meId: string): 
           : members.get(row.wrapped_by);
         if (peer) {
           const key = await unwrapKey(meId, peer, row.wrapped_key);
-          if (key) return key;
+          if (key) {
+            rememberKey(conversationId, key);
+            return key;
+          }
         } else {
         }
       }
@@ -419,6 +422,7 @@ export async function getConversationKey(conversationId: string, meId: string): 
         return null;
       }
       broadcastRotation(conversationId);
+      rememberKey(conversationId, key);
       return key;
     }
     convKeyCache.delete(conversationId);
@@ -461,14 +465,25 @@ export async function decryptStoredText(
   // once and retry before giving up.
   convKeyCache.delete(conversationId);
   const retryKey = await getConversationKey(conversationId, meId);
-  if (!retryKey) return null;
-  try {
-    const plain = await subtle().decrypt({ name: "AES-GCM", iv: packed.iv }, retryKey, packed.data);
-    return new TextDecoder().decode(plain);
-  } catch {
-    convKeyCache.delete(conversationId); // re-derive on the next attempt
-    return null;
+  if (retryKey) {
+    try {
+      const plain = await subtle().decrypt({ name: "AES-GCM", iv: packed.iv }, retryKey, packed.data);
+      return new TextDecoder().decode(plain);
+    } catch {
+      // fall through to the device keyring below
+    }
   }
+  // Last resort: every conversation key this device has ever derived — old
+  // generations included — so history survives live rotations.
+  for (const ringKey of await keyringKeys(conversationId)) {
+    try {
+      return new TextDecoder().decode(await subtle().decrypt({ name: "AES-GCM", iv: packed.iv }, ringKey, packed.data));
+    } catch {
+      // try the next keyring entry
+    }
+  }
+  convKeyCache.delete(conversationId); // re-derive on the next attempt
+  return null;
 }
 
 /**
