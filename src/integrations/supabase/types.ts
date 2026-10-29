@@ -269,6 +269,42 @@ export type Database = {
           },
         ]
       }
+      contacts: {
+        Row: {
+          contact_id: string
+          created_at: string
+          id: string
+          owner_id: string
+        }
+        Insert: {
+          contact_id: string
+          created_at?: string
+          id?: string
+          owner_id: string
+        }
+        Update: {
+          contact_id?: string
+          created_at?: string
+          id?: string
+          owner_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "contacts_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "contacts_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       conversation_keys: {
         Row: {
           conversation_id: string
@@ -324,6 +360,7 @@ export type Database = {
       conversation_members: {
         Row: {
           conversation_id: string
+          deleted_at: string | null
           joined_at: string
           last_read_at: string | null
           muted: boolean
@@ -331,6 +368,7 @@ export type Database = {
         }
         Insert: {
           conversation_id: string
+          deleted_at?: string | null
           joined_at?: string
           last_read_at?: string | null
           muted?: boolean
@@ -338,6 +376,7 @@ export type Database = {
         }
         Update: {
           conversation_id?: string
+          deleted_at?: string | null
           joined_at?: string
           last_read_at?: string | null
           muted?: boolean
