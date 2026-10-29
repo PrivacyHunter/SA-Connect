@@ -20,6 +20,7 @@ import {
   Pin,
   Play,
   Send,
+  SmilePlus,
   Trash2,
   Users,
   X,
@@ -46,7 +47,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { UserAvatar } from "@/components/user-avatar";
 import { useCallEngine } from "@/lib/call-engine";
-import { Ban, Eraser, Flag, Phone, ShieldAlert, Video } from "lucide-react";
+import { Ban, Eraser, Flag, Heart, Phone, ShieldAlert, Video } from "lucide-react";
 import { useIsOnline } from "@/lib/presence";
 import { useChatActivity } from "@/hooks/use-chat-activity";
 import { Textarea } from "@/components/ui/textarea";
