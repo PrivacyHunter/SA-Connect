@@ -131,10 +131,14 @@ function PremiumPage() {
             <Input id="proof" type="file" accept="image/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="mt-1.5" />
           </div>
           <div>
-            <Label htmlFor="pnote">Reference / note (optional)</Label>
-            <Input id="pnote" value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. transaction ID, sender name" maxLength={200} className="mt-1.5" />
+            <Label htmlFor="trx">Transaction (TRX) ID</Label>
+            <Input id="trx" required value={trx} onChange={(e) => setTrx(e.target.value)} placeholder="TRX ID from your Easypaisa / JazzCash receipt" maxLength={100} className="mt-1.5" />
           </div>
-          <Button type="submit" disabled={busy || !file}>
+          <div>
+            <Label htmlFor="pnote">Reference / note (optional)</Label>
+            <Input id="pnote" value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. sender name" maxLength={200} className="mt-1.5" />
+          </div>
+          <Button type="submit" disabled={busy || !file || !trx.trim()}>
             {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
             Submit payment proof
           </Button>
