@@ -31,6 +31,7 @@ function PremiumPage() {
   const qc = useQueryClient();
   const { data: settings } = useQuery(siteSettingsQuery);
   const [file, setFile] = useState<File | null>(null);
+  const [trx, setTrx] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -55,15 +56,21 @@ function PremiumPage() {
       toast.error("Attach your payment screenshot");
       return;
     }
+    if (!trx.trim()) {
+      toast.error("Enter your transaction (TRX) ID");
+      return;
+    }
     setBusy(true);
     try {
       const path = await uploadFile("payments", file);
+      const fullNote = `TRX: ${trx.trim()}${note.trim() ? ` · ${note.trim()}` : ""}`;
       const { error } = await supabase
         .from("payment_requests")
-        .insert({ user_id: me.id, screenshot_path: path, note: note.trim() || null });
+        .insert({ user_id: me.id, screenshot_path: path, note: fullNote });
       if (error) throw error;
       toast.success("Proof uploaded — access is granted after approval");
       setFile(null);
+      setTrx("");
       setNote("");
       await qc.invalidateQueries({ queryKey: ["my-payment-requests", me.id] });
     } catch (err) {
@@ -115,7 +122,7 @@ function PremiumPage() {
         )}
         <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-muted-foreground">
           <li>Send $2 for one month of Premium.</li>
-          <li>Upload a screenshot of your payment below.</li>
+          <li>Enter your transaction (TRX) ID and upload the payment screenshot below.</li>
           <li>The team approves it and Premium is switched on for 30 days.</li>
         </ol>
         <form className="mt-5 space-y-4" onSubmit={submit}>
@@ -124,10 +131,14 @@ function PremiumPage() {
             <Input id="proof" type="file" accept="image/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="mt-1.5" />
           </div>
           <div>
-            <Label htmlFor="pnote">Reference / note (optional)</Label>
-            <Input id="pnote" value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. transaction ID, sender name" maxLength={200} className="mt-1.5" />
+            <Label htmlFor="trx">Transaction (TRX) ID</Label>
+            <Input id="trx" required value={trx} onChange={(e) => setTrx(e.target.value)} placeholder="TRX ID from your Easypaisa / JazzCash receipt" maxLength={100} className="mt-1.5" />
           </div>
-          <Button type="submit" disabled={busy || !file}>
+          <div>
+            <Label htmlFor="pnote">Reference / note (optional)</Label>
+            <Input id="pnote" value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. sender name" maxLength={200} className="mt-1.5" />
+          </div>
+          <Button type="submit" disabled={busy || !file || !trx.trim()}>
             {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
             Submit payment proof
           </Button>

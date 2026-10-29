@@ -20,6 +20,7 @@ import {
   Pin,
   Play,
   Send,
+  SmilePlus,
   Trash2,
   Users,
   X,
@@ -46,7 +47,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { UserAvatar } from "@/components/user-avatar";
 import { useCallEngine } from "@/lib/call-engine";
-import { Ban, Eraser, Flag, Phone, ShieldAlert, Video } from "lucide-react";
+import { Ban, Eraser, Flag, Heart, Phone, ShieldAlert, Video } from "lucide-react";
 import { useIsOnline } from "@/lib/presence";
 import { useChatActivity } from "@/hooks/use-chat-activity";
 import { Textarea } from "@/components/ui/textarea";
@@ -68,6 +69,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Popover, PopoverTrigger } from "@/components/ui/popover";
+import { ChatPicker } from "@/components/chat-picker";
 
 type Wallpaper = { kind: "preset"; id: string } | { kind: "image"; path: string };
 
@@ -163,6 +166,7 @@ function ConversationPage() {
   const call = useCallEngine();
   const [wallpaperOpen, setWallpaperOpen] = useState(false);
   const [wallpaper, setWallpaper] = useState<Wallpaper | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   // Wallpaper is a per-device preference, kept in localStorage per conversation.
   useEffect(() => {
@@ -489,6 +493,26 @@ function ConversationPage() {
     qc.invalidateQueries({ queryKey: ["conversations"] });
   }
 
+  function insertEmoji(emoji: string) {
+    setText((t) => t + emoji);
+    setActivity("typing");
+  }
+
+  async function sendSticker(kind: "sticker" | "gif", url: string) {
+    setPickerOpen(false);
+    await send(kind, null, url, null, null, false);
+  }
+
+  async function saveSticker(mediaPath: string) {
+    if (!me) return;
+    const { error } = await supabase.from("sticker_favorites").insert({ user_id: me.id, media_path: mediaPath });
+    if (error && error.code !== "23505") {
+      toast.error(error.message);
+      return;
+    }
+    toast.success("Sticker saved to favorites");
+  }
+
   /** Receipt: tells senders their message reached this device (drives the double tick). */
   async function markDelivered(rows: Pick<Message, "id" | "sender_id">[]) {
     if (!me) return;
@@ -618,9 +642,13 @@ function ConversationPage() {
         ? last.body
         : last.kind === "image"
           ? "📷 Photo"
-          : last.kind === "voice"
-            ? "🎤 Voice note"
-            : `📎 ${last.file_name ?? "File"}`;
+          : last.kind === "sticker"
+            ? "🖼️ Sticker"
+            : last.kind === "gif"
+              ? "GIF"
+              : last.kind === "voice"
+                ? "🎤 Voice note"
+                : `📎 ${last.file_name ?? "File"}`;
     const { error } = await supabase
       .from("conversations")
       .update({ pinned_body: body, pinned_at: last.created_at })
@@ -727,7 +755,7 @@ function ConversationPage() {
               </>
             ) : isDm ? (
               other ? (
-                chatBlocked ? "encrypted" : otherOnline ? "Online" : other.profiles.last_seen_at ? `Last seen ${formatLastSeen(other.profiles.last_seen_at)}` : "Offline"
+                chatBlocked ? "encrypted" : otherOnline ? "Online" : other.profiles.last_seen_at ? `Last seen ${formatLastSeen(other.profiles.last_seen_at)}` : "Last seen a while ago"
               ) : (
                 "encrypted"
               )
@@ -861,6 +889,7 @@ function ConversationPage() {
             members={members}
             onDeleteForMe={deleteForMe}
             onDeleteForEveryone={deleteForEveryone}
+            onSaveSticker={(p) => void saveSticker(p)}
           />
         ))}
         {activityLabel && (
@@ -931,6 +960,27 @@ function ConversationPage() {
           </div>
         ) : canPost ? (
           <>
+            {me && (
+              <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label="Emoji, stickers and GIFs"
+                    disabled={recording}
+                  >
+                    <SmilePlus className={cn("h-5 w-5", pickerOpen && "text-gold")} />
+                  </Button>
+                </PopoverTrigger>
+                <ChatPicker
+                  meId={me.id}
+                  onEmoji={insertEmoji}
+                  onSticker={(p) => void sendSticker("sticker", p)}
+                  onGif={(u) => void sendSticker("gif", u)}
+                />
+              </Popover>
+            )}
             <input type="file" accept="image/*,video/*" className="hidden" id={`img-${id}`} onChange={(e) => { const f = e.target.files?.[0]; if (f) pickFile(f); }} />
             <input type="file" className="hidden" id={`file-${id}`} onChange={(e) => { const f = e.target.files?.[0]; if (f) pickFile(f); }} />
             <Button type="button" variant="ghost" size="icon" asChild>
@@ -1086,6 +1136,7 @@ function MessageBubble({
   members,
   onDeleteForMe,
   onDeleteForEveryone,
+  onSaveSticker,
 }: {
   message: Message;
   mine: boolean;
@@ -1094,14 +1145,19 @@ function MessageBubble({
   members: ConversationMember[];
   onDeleteForMe: (id: string) => void;
   onDeleteForEveryone: (id: string) => void;
+  onSaveSticker: (mediaPath: string) => void;
 }) {
-  const { data: mediaSrc } = useMediaSrc(message.media_url ? "media" : null, message.media_url);
+  // Stickers and GIFs from the built-in pack are plain asset URLs, not storage paths.
+  const storagePath = message.media_url?.startsWith("/") ? null : message.media_url;
+  const { data: mediaSrc } = useMediaSrc(storagePath ? "media" : null, storagePath);
   const [opened, setOpened] = useState(false);
   const viewedByMe = message.message_views?.some((v) => v.user_id === meId) ?? false;
   const viewed = viewedByMe || opened;
   const tombstone = message.deleted_for_everyone && !premium;
   const expired = !mine && message.one_view && viewedByMe && !premium;
   const locked = !mine && message.one_view && !viewed;
+  const stickerish = (message.kind === "sticker" || message.kind === "gif") && !tombstone && !expired && !locked;
+  const stickerSrc = stickerish ? (message.media_url?.startsWith("/") ? message.media_url : mediaSrc) : null;
 
   // WhatsApp-style receipt for my own messages: ✓ sent, ✓✓ delivered, gold ✓✓ seen
   const others = members.filter((m) => m.user_id !== meId);
@@ -1143,6 +1199,11 @@ function MessageBubble({
           <DropdownMenuItem onClick={() => onDeleteForMe(message.id)}>
             <Trash2 className="h-4 w-4" /> Delete for me
           </DropdownMenuItem>
+          {message.kind === "sticker" && message.media_url && !tombstone && !expired && !locked && (
+            <DropdownMenuItem onClick={() => onSaveSticker(message.media_url!)}>
+              <Heart className="h-4 w-4" /> Save sticker
+            </DropdownMenuItem>
+          )}
           {mine && !message.deleted_for_everyone && (
             <DropdownMenuItem
               className="text-destructive focus:text-destructive"
@@ -1155,10 +1216,12 @@ function MessageBubble({
       </DropdownMenu>
       <div
         className={cn(
-          "max-w-[75%] rounded-2xl px-3.5 py-2 text-sm",
-          mine
-            ? "rounded-br-md bg-primary text-primary-foreground"
-            : "rounded-bl-md border border-border bg-card",
+          "max-w-[75%] rounded-2xl text-sm",
+          stickerish ? "px-0 py-0" : "px-3.5 py-2",
+          !stickerish &&
+            (mine
+              ? "rounded-br-md bg-primary text-primary-foreground"
+              : "rounded-bl-md border border-border bg-card"),
         )}
       >
         {!mine && !tombstone && (
@@ -1265,6 +1328,16 @@ function MessageBubble({
                 {(!message.one_view || premium) && <Download className="h-4 w-4" />}
               </a>
             )}
+            {stickerish &&
+              (stickerSrc ? (
+                <img
+                  src={stickerSrc}
+                  alt={message.kind === "sticker" ? "Sticker" : "GIF"}
+                  className="max-h-48 w-auto max-w-[220px]"
+                />
+              ) : (
+                <div className="h-36 w-36 animate-pulse rounded-xl bg-muted" />
+              ))}
             {message.deleted_for_everyone && premium && (
               <div className="mt-1 flex items-center gap-1.5 text-[11px] italic opacity-75">
                 <Trash2 className="h-3 w-3" /> Deleted for everyone · kept visible for you (Premium)
@@ -1286,7 +1359,7 @@ function MessageBubble({
             )}
           </>
         )}
-        <div className={cn("mt-0.5 flex items-center justify-end gap-1 text-[10px]", mine ? "text-primary-foreground/70" : "text-muted-foreground")}>
+        <div className={cn("mt-0.5 flex items-center justify-end gap-1 text-[10px]", stickerish ? "text-muted-foreground" : mine ? "text-primary-foreground/70" : "text-muted-foreground")}>
           {formatClockTime(message.created_at)}
           {mine && <Ticks state={receipt} />}
         </div>
