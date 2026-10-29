@@ -1328,6 +1328,16 @@ function MessageBubble({
                 {(!message.one_view || premium) && <Download className="h-4 w-4" />}
               </a>
             )}
+            {stickerish &&
+              (stickerSrc ? (
+                <img
+                  src={stickerSrc}
+                  alt={message.kind === "sticker" ? "Sticker" : "GIF"}
+                  className="max-h-48 w-auto max-w-[220px]"
+                />
+              ) : (
+                <div className="h-36 w-36 animate-pulse rounded-xl bg-muted" />
+              ))}
             {message.deleted_for_everyone && premium && (
               <div className="mt-1 flex items-center gap-1.5 text-[11px] italic opacity-75">
                 <Trash2 className="h-3 w-3" /> Deleted for everyone · kept visible for you (Premium)
@@ -1349,7 +1359,7 @@ function MessageBubble({
             )}
           </>
         )}
-        <div className={cn("mt-0.5 flex items-center justify-end gap-1 text-[10px]", mine ? "text-primary-foreground/70" : "text-muted-foreground")}>
+        <div className={cn("mt-0.5 flex items-center justify-end gap-1 text-[10px]", stickerish ? "text-muted-foreground" : mine ? "text-primary-foreground/70" : "text-muted-foreground")}>
           {formatClockTime(message.created_at)}
           {mine && <Ticks state={receipt} />}
         </div>
