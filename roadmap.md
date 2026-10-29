@@ -17,6 +17,10 @@
 - [x] Online/last seen, typing + recording animations, clear chat, block/report/report-and-block, premium self-unblock
 - [x] Developer panel access, discover_members, referral code card
 - [x] Last-seen timestamps, sent/delivered/seen ticks, delete-for-me / delete-for-everyone (premium note), chat wallpaper
+- [x] Emoji/sticker/GIF picker (chat-picker.tsx): emoji insert, built-in GIF pack, gallery→sticker creation, favorites, recent stickers, "Save sticker" message menu — verified in preview 2026-10-29
+- [x] Premium submission now REQUIRES the transaction (TRX) ID + screenshot — verified submit stays disabled without them
+- [x] Chat list preview fixed: DB trigger keeps last_message_at/body in sync (previously never written); sticker/GIF/photo/voice previews show; delete-for-everyone updates the preview
+- [x] Privacy fix: conversations were readable by every signed-in account (chat list leaked other people's DMs) — restrictive members-only read policy added + chat list filtered by membership
 - [x] Admin Reports tab (/panel) with resolve/dismiss/ban; blocked-users list on profile
 - Test credentials: ali.test@saconnect-test.com / sara.test@saconnect-test.com (password set by test harness 2026-10-28; escrow seeded for both)
 
