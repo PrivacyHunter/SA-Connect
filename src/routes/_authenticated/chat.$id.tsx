@@ -889,6 +889,7 @@ function ConversationPage() {
             members={members}
             onDeleteForMe={deleteForMe}
             onDeleteForEveryone={deleteForEveryone}
+            onSaveSticker={(p) => void saveSticker(p)}
           />
         ))}
         {activityLabel && (
