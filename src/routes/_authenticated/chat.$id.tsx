@@ -1136,6 +1136,7 @@ function MessageBubble({
   members,
   onDeleteForMe,
   onDeleteForEveryone,
+  onSaveSticker,
 }: {
   message: Message;
   mine: boolean;
@@ -1144,8 +1145,11 @@ function MessageBubble({
   members: ConversationMember[];
   onDeleteForMe: (id: string) => void;
   onDeleteForEveryone: (id: string) => void;
+  onSaveSticker: (mediaPath: string) => void;
 }) {
-  const { data: mediaSrc } = useMediaSrc(message.media_url ? "media" : null, message.media_url);
+  // Stickers and GIFs from the built-in pack are plain asset URLs, not storage paths.
+  const storagePath = message.media_url?.startsWith("/") ? null : message.media_url;
+  const { data: mediaSrc } = useMediaSrc(storagePath ? "media" : null, storagePath);
   const [opened, setOpened] = useState(false);
   const viewedByMe = message.message_views?.some((v) => v.user_id === meId) ?? false;
   const viewed = viewedByMe || opened;
