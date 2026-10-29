@@ -63,13 +63,14 @@ function PremiumPage() {
     setBusy(true);
     try {
       const path = await uploadFile("payments", file);
-      const note = `TRX: ${trx.trim()}${noteExtra ? ` · ${noteExtra.trim()}` : ""}`;
+      const fullNote = `TRX: ${trx.trim()}${note.trim() ? ` · ${note.trim()}` : ""}`;
       const { error } = await supabase
         .from("payment_requests")
-        .insert({ user_id: me.id, screenshot_path: path, note });
+        .insert({ user_id: me.id, screenshot_path: path, note: fullNote });
       if (error) throw error;
       toast.success("Proof uploaded — access is granted after approval");
       setFile(null);
+      setTrx("");
       setNote("");
       await qc.invalidateQueries({ queryKey: ["my-payment-requests", me.id] });
     } catch (err) {
