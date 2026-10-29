@@ -1145,6 +1145,61 @@ export type Database = {
         }
         Relationships: []
       }
+      sticker_favorites: {
+        Row: {
+          created_at: string
+          media_path: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          media_path: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          media_path?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sticker_favorites_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      stickers: {
+        Row: {
+          created_at: string
+          id: string
+          media_path: string
+          owner_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          media_path: string
+          owner_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          media_path?: string
+          owner_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "stickers_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       stories: {
         Row: {
           author_id: string

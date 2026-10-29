@@ -228,6 +228,50 @@ async function pairKey(userId: string, peerJwk: JsonWebKey): Promise<CryptoKey> 
 
 const convKeyCache = new Map<string, Promise<CryptoKey | null>>();
 
+// ---- Per-device keyring -----------------------------------------------------
+// Every conversation key this device has ever successfully derived is kept
+// (wrapped nowhere — AES raw keys in localStorage, per conversation). Old
+// messages stay readable on this device even after the live key rotates or a
+// peer re-wraps history, instead of degrading to "(encrypted message)".
+const KEYRING_CAP = 80;
+const keyringStore = (conversationId: string) => `sa-e2ee-ring-${conversationId}`;
+
+function loadKeyring(conversationId: string): string[] {
+  try {
+    const raw = localStorage.getItem(keyringStore(conversationId));
+    const parsed = raw ? (JSON.parse(raw) as unknown) : [];
+    return Array.isArray(parsed) ? parsed.filter((k): k is string => typeof k === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberKey(conversationId: string, key: CryptoKey): void {
+  void subtle()
+    .exportKey("raw", key)
+    .then((buf) => {
+      const raw = toB64(buf);
+      const ring = loadKeyring(conversationId).filter((k) => k !== raw);
+      ring.push(raw);
+      while (ring.length > KEYRING_CAP) ring.shift();
+      localStorage.setItem(keyringStore(conversationId), JSON.stringify(ring));
+    })
+    .catch(() => undefined);
+}
+
+/** Builds AES keys from the device keyring, newest first. */
+async function keyringKeys(conversationId: string): Promise<CryptoKey[]> {
+  const out: CryptoKey[] = [];
+  for (const raw of loadKeyring(conversationId).reverse()) {
+    try {
+      out.push(await subtle().importKey("raw", fromB64(raw), { name: "AES-GCM" }, true, ["encrypt", "decrypt"]));
+    } catch {
+      // skip corrupt ring entries
+    }
+  }
+  return out;
+}
+
 // Live convergence: when a member rotates the conversation key (e.g. after
 // signing in on a new device), every other open page re-derives immediately
 // instead of staying on the stale cached key until a reload.
@@ -338,7 +382,10 @@ export async function getConversationKey(conversationId: string, meId: string): 
           : members.get(row.wrapped_by);
         if (peer) {
           const key = await unwrapKey(meId, peer, row.wrapped_key);
-          if (key) return key;
+          if (key) {
+            rememberKey(conversationId, key);
+            return key;
+          }
         } else {
         }
       }
@@ -375,6 +422,7 @@ export async function getConversationKey(conversationId: string, meId: string): 
         return null;
       }
       broadcastRotation(conversationId);
+      rememberKey(conversationId, key);
       return key;
     }
     convKeyCache.delete(conversationId);
@@ -417,14 +465,25 @@ export async function decryptStoredText(
   // once and retry before giving up.
   convKeyCache.delete(conversationId);
   const retryKey = await getConversationKey(conversationId, meId);
-  if (!retryKey) return null;
-  try {
-    const plain = await subtle().decrypt({ name: "AES-GCM", iv: packed.iv }, retryKey, packed.data);
-    return new TextDecoder().decode(plain);
-  } catch {
-    convKeyCache.delete(conversationId); // re-derive on the next attempt
-    return null;
+  if (retryKey) {
+    try {
+      const plain = await subtle().decrypt({ name: "AES-GCM", iv: packed.iv }, retryKey, packed.data);
+      return new TextDecoder().decode(plain);
+    } catch {
+      // fall through to the device keyring below
+    }
   }
+  // Last resort: every conversation key this device has ever derived — old
+  // generations included — so history survives live rotations.
+  for (const ringKey of await keyringKeys(conversationId)) {
+    try {
+      return new TextDecoder().decode(await subtle().decrypt({ name: "AES-GCM", iv: packed.iv }, ringKey, packed.data));
+    } catch {
+      // try the next keyring entry
+    }
+  }
+  convKeyCache.delete(conversationId); // re-derive on the next attempt
+  return null;
 }
 
 /**
@@ -446,8 +505,18 @@ export async function migrateConversationHistory(conversationId: string, meId: s
       .select("wrapped_by, wrapped_key, wrapper_public_key")
       .eq("conversation_id", conversationId)
       .eq("user_id", meId);
-    // Older generations only: every key that is not the current one.
+    // Older generations only. The device keyring counts too — a key this
+    // device derived once can always migrate history it can still decrypt.
     const candidates = new Map<string, CryptoKey>();
+    const ringKeys = await keyringKeys(conversationId);
+    const ringRaws = new Set<string>();
+    for (const k of ringKeys) {
+      const raw = toB64(await subtle().exportKey("raw", k));
+      if (raw !== currentRaw) {
+        candidates.set(raw, k);
+        ringRaws.add(raw);
+      }
+    }
     for (const row of (keyRows ?? []) as { wrapped_by: string; wrapped_key: string; wrapper_public_key: string | null }[]) {
       // Prefer the wrapper's at-wrap-time public key stored on the row; the
       // wrapper may have since rotated their browser key pair.
@@ -458,7 +527,7 @@ export async function migrateConversationHistory(conversationId: string, meId: s
       const k = await unwrapKey(meId, peer, row.wrapped_key);
       if (!k) continue;
       const raw = toB64(await subtle().exportKey("raw", k));
-      if (raw !== currentRaw) candidates.set(raw, k);
+      if (raw !== currentRaw && !ringRaws.has(raw)) candidates.set(raw, k);
     }
     if (!candidates.size) return 0;
 
