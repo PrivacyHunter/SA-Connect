@@ -473,17 +473,53 @@ export async function decryptStoredText(
       // fall through to the device keyring below
     }
   }
-  // Last resort: every conversation key this device has ever derived — old
-  // generations included — so history survives live rotations.
-  for (const ringKey of await keyringKeys(conversationId)) {
+  // Every conversation key this device has ever derived, plus every key
+  // generation wrapped for me in the database (members may have rotated
+  // independently, so the sender's key need not be the newest wrap).
+  const candidates = [...(await keyringKeys(conversationId)), ...(await allWrappedKeys(conversationId, meId))];
+  for (const ringKey of candidates) {
     try {
       return new TextDecoder().decode(await subtle().decrypt({ name: "AES-GCM", iv: packed.iv }, ringKey, packed.data));
     } catch {
-      // try the next keyring entry
+      // try the next key
     }
   }
+  allWrappedCache.delete(conversationId);
   convKeyCache.delete(conversationId); // re-derive on the next attempt
   return null;
+}
+
+const allWrappedCache = new Map<string, Promise<CryptoKey[]>>();
+function allWrappedKeys(conversationId: string, meId: string): Promise<CryptoKey[]> {
+  let p = allWrappedCache.get(conversationId);
+  if (p) return p;
+  p = (async () => {
+    await ensureMyKeysOnce(meId);
+    const members = await memberPublicKeys(conversationId);
+    const { data } = await supabase
+      .from("conversation_keys")
+      .select("wrapped_by, wrapped_key, wrapper_public_key")
+      .eq("conversation_id", conversationId)
+      .eq("user_id", meId)
+      .order("created_at", { ascending: false });
+    const out: CryptoKey[] = [];
+    for (const row of (data ?? []) as { wrapped_by: string; wrapped_key: string; wrapper_public_key: string | null }[]) {
+      const peers: JsonWebKey[] = [];
+      if (row.wrapper_public_key) peers.push(JSON.parse(row.wrapper_public_key) as JsonWebKey);
+      const cur = members.get(row.wrapped_by);
+      if (cur) peers.push(cur);
+      for (const peer of peers) {
+        const k = await unwrapKey(meId, peer, row.wrapped_key);
+        if (k) {
+          out.push(k);
+          break;
+        }
+      }
+    }
+    return out;
+  })().catch(() => [] as CryptoKey[]);
+  allWrappedCache.set(conversationId, p);
+  return p;
 }
 
 /**
