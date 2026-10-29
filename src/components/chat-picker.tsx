@@ -220,7 +220,7 @@ function StickerSection({
 }: {
   title: string;
   paths: string[];
-  favoriteSet?: Set<string>;
+  favoriteSet: Set<string> | undefined;
   onPick: (path: string) => void;
   onToggleFavorite: (path: string) => void;
 }) {
