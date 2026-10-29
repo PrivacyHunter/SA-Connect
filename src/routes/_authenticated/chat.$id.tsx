@@ -1156,6 +1156,8 @@ function MessageBubble({
   const tombstone = message.deleted_for_everyone && !premium;
   const expired = !mine && message.one_view && viewedByMe && !premium;
   const locked = !mine && message.one_view && !viewed;
+  const stickerish = (message.kind === "sticker" || message.kind === "gif") && !tombstone && !expired && !locked;
+  const stickerSrc = stickerish ? (message.media_url?.startsWith("/") ? message.media_url : mediaSrc) : null;
 
   // WhatsApp-style receipt for my own messages: ✓ sent, ✓✓ delivered, gold ✓✓ seen
   const others = members.filter((m) => m.user_id !== meId);
