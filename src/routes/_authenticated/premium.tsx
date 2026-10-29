@@ -122,7 +122,7 @@ function PremiumPage() {
         )}
         <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-muted-foreground">
           <li>Send $2 for one month of Premium.</li>
-          <li>Upload a screenshot of your payment below.</li>
+          <li>Enter your transaction (TRX) ID and upload the payment screenshot below.</li>
           <li>The team approves it and Premium is switched on for 30 days.</li>
         </ol>
         <form className="mt-5 space-y-4" onSubmit={submit}>
