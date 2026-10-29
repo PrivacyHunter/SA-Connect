@@ -499,6 +499,8 @@ async function publishKey(
 export async function getConversationKey(conversationId: string, meId: string): Promise<CryptoKey | null> {
   const cached = convKeyCache.get(conversationId);
   if (cached) return cached;
+  // Listen for key changes from other members on every opened conversation.
+  keysyncChannel(conversationId);
   const promise = (async () => {
     const state = await ensureMyKeysOnce(meId);
     const members = await memberPublicKeys(conversationId);
