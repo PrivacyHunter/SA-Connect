@@ -20,3 +20,4 @@
 - File downloads go through can_download_from (owner, followers, chat partners, staff); site-wide marquee and social links live in the single-row site_settings table, edited only via developer/owner server functions.
 - Staff reading user chats goes through moderation server functions restricted to developer/owner and every read is written to admin_audit.
 - Phone verification uses an app-owned OTP (hashed code, 10 min expiry, 5 attempts, 60s resend) sent via the Twilio connector, not Supabase phone auth.
+- Chat E2EE: a device only generates or uploads a public key when the account has no password escrow; otherwise a mismatched device is "locked" and must unlock with the password. Why: devices overwriting the profile key locked each other out of every chat.

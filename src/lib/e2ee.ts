@@ -47,84 +47,142 @@ function unpack(stored: string): { iv: Uint8Array<ArrayBuffer>; data: Uint8Array
 const subtle = () => crypto.subtle;
 const ECDH = { name: "ECDH", namedCurve: "P-256" } as const;
 
-/**
- * Ensures the signed-in user has an E2EE key pair and uploads the public key
- * to their profile. Concurrent callers share one run: two parallel runs on an
- * empty browser would each generate a key pair and the second would overwrite
- * the first's private key while the profile kept the first's public key —
- * every pairwise unwrap would then fail. The re-check loop also repairs a
- * private key that another open tab overwrote mid-run.
- */
-const ensureInflight = new Map<string, Promise<void>>();
-export function ensureMyKeys(userId: string): Promise<void> {
+// ---- Device key state ------------------------------------------------------
+// "ready": this device's private key matches the profile public key.
+// "locked": the account has a password-escrowed key this device does not hold
+//   (new device, or an old divergent key). The device must unlock with the
+//   password; it never generates or uploads a competing key, which used to
+//   flip the profile key between devices and lock every other device out.
+export type KeyState = "ready" | "locked" | "unavailable";
+
+const legacyStore = (uid: string) => `sa-e2ee-legacy-${uid}`;
+
+function samePub(a: string | null, b: JsonWebKey | null): boolean {
+  if (!a || !b) return false;
+  try {
+    const p = JSON.parse(a) as JsonWebKey;
+    return p.x === b.x && p.y === b.y;
+  } catch {
+    return false;
+  }
+}
+
+function pubOf(jwkStr: string): JsonWebKey | null {
+  try {
+    const jwk = JSON.parse(jwkStr) as JsonWebKey;
+    return { kty: jwk.kty!, crv: jwk.crv!, x: jwk.x!, y: jwk.y!, ext: true };
+  } catch {
+    return null;
+  }
+}
+
+function loadLegacy(userId: string): string[] {
+  try {
+    const raw = localStorage.getItem(legacyStore(userId));
+    const parsed = raw ? (JSON.parse(raw) as unknown) : [];
+    return Array.isArray(parsed) ? parsed.filter((k): k is string => typeof k === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Keeps a replaced private key so wraps made for it still open on this device. */
+function addLegacy(userId: string, jwkStr: string) {
+  const x = pubOf(jwkStr)?.x;
+  const list = loadLegacy(userId).filter((k) => pubOf(k)?.x !== x);
+  list.push(jwkStr);
+  while (list.length > 10) list.shift();
+  localStorage.setItem(legacyStore(userId), JSON.stringify(list));
+}
+
+function resetCaches(userId: string) {
+  ensureMemo.delete(userId);
+  privCache.clear();
+  pairCache.clear();
+  convKeyCache.clear();
+  convKeyMeta.clear();
+  allWrappedCache.clear();
+}
+
+async function uploadPublicKey(userId: string, jwkStr: string) {
+  const pub = pubOf(jwkStr);
+  if (pub) await supabase.from("profiles").update({ public_key: JSON.stringify(pub) }).eq("id", userId);
+}
+
+const ensureInflight = new Map<string, Promise<KeyState>>();
+export function ensureMyKeys(userId: string): Promise<KeyState> {
   const existing = ensureInflight.get(userId);
   if (existing) return existing;
-  const p = (async () => {
+  const p = (async (): Promise<KeyState> => {
     try {
-      for (let attempt = 0; attempt < 3; attempt++) {
-        let stored = localStorage.getItem(privStore(userId));
-        if (!stored) {
-          const pair = await subtle().generateKey(ECDH, true, ["deriveKey"]);
-          localStorage.setItem(privStore(userId), JSON.stringify(await subtle().exportKey("jwk", pair.privateKey)));
-          stored = localStorage.getItem(privStore(userId));
-        }
-        const jwk = JSON.parse(stored!) as JsonWebKey;
-        const pubJwk = JSON.stringify({ kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y, ext: true });
-        const { data } = await supabase.from("profiles").select("public_key").eq("id", userId).maybeSingle();
-        if (data && data.public_key !== pubJwk) {
-          await supabase.from("profiles").update({ public_key: pubJwk }).eq("id", userId);
-        }
-        // Another tab may have replaced the private key while we uploaded the
-        // matching public key — converge on whatever is stored now.
-        if (localStorage.getItem(privStore(userId)) === stored) return;
+      const { data } = await supabase
+        .from("profiles")
+        .select("public_key, encrypted_private_key")
+        .eq("id", userId)
+        .maybeSingle();
+      const row = data as { public_key: string | null; encrypted_private_key?: string | null } | null;
+      const profilePub = row?.public_key ?? null;
+      const escrow = hasEscrowColumn(row);
+      const stored = localStorage.getItem(privStore(userId));
+      if (stored) {
+        if (samePub(profilePub, pubOf(stored))) return "ready";
+        if (escrow) return "locked";
+        await uploadPublicKey(userId, stored);
+        return "ready";
       }
+      if (escrow) return "locked";
+      const pair = await subtle().generateKey(ECDH, true, ["deriveKey"]);
+      const jwkStr = JSON.stringify(await subtle().exportKey("jwk", pair.privateKey));
+      localStorage.setItem(privStore(userId), jwkStr);
+      await uploadPublicKey(userId, jwkStr);
+      return "ready";
     } catch {
-      // E2EE unavailable; messages fall back to plaintext transport
+      return "unavailable";
+    } finally {
+      ensureInflight.delete(userId);
     }
   })();
   ensureInflight.set(userId, p);
-  p.catch(() => ensureInflight.delete(userId));
   return p;
 }
 
-// Key derivation must never run against a stale profile public key (e.g. the
-// wrap created before this browser uploaded its current key), so every
+// Key derivation must never run against a stale profile public key, so every
 // derive/encrypt/decrypt path awaits this memoized promise first.
-const ensureMemo = new Map<string, Promise<void>>();
-function ensureMyKeysOnce(userId: string): Promise<void> {
+const ensureMemo = new Map<string, Promise<KeyState>>();
+function ensureMyKeysOnce(userId: string): Promise<KeyState> {
   let p = ensureMemo.get(userId);
   if (!p) {
-    p = ensureMyKeys(userId).catch(() => undefined);
+    p = ensureMyKeys(userId);
     ensureMemo.set(userId, p);
   }
   return p;
 }
 
+/** Current key state for this device (memoized). */
+export function getKeyState(userId: string): Promise<KeyState> {
+  return ensureMyKeysOnce(userId);
+}
+
 const privCache = new Map<string, Promise<CryptoKey>>();
-function myPrivateKey(userId: string): Promise<CryptoKey> {
-  let p = privCache.get(userId);
+function importPriv(jwkStr: string): Promise<CryptoKey> {
+  let p = privCache.get(jwkStr);
   if (!p) {
-    p = subtle().importKey(
-      "jwk",
-      JSON.parse(localStorage.getItem(privStore(userId))!) as JsonWebKey,
-      ECDH,
-      true,
-      ["deriveKey"],
-    );
-    privCache.set(userId, p);
+    p = subtle().importKey("jwk", JSON.parse(jwkStr) as JsonWebKey, ECDH, true, ["deriveKey"]);
+    privCache.set(jwkStr, p);
   }
   return p;
 }
 
+/** Primary private key first, then replaced keys kept for old wraps. */
+function myPrivateJwks(userId: string): string[] {
+  const primary = localStorage.getItem(privStore(userId));
+  return [...(primary ? [primary] : []), ...loadLegacy(userId).reverse()];
+}
+
 /** The public JWK matching the stored private key, or null when unavailable. */
 function myPublicJwk(userId: string): JsonWebKey | null {
-  try {
-    const jwk = JSON.parse(localStorage.getItem(privStore(userId))!) as JsonWebKey;
-    const pub: JsonWebKey = { kty: jwk.kty!, crv: jwk.crv!, x: jwk.x!, y: jwk.y!, ext: true };
-    return pub;
-  } catch {
-    return null;
-  }
+  const s = localStorage.getItem(privStore(userId));
+  return s ? pubOf(s) : null;
 }
 
 // ---- Password escrow -------------------------------------------------------
@@ -184,30 +242,77 @@ async function fetchEscrow(userId: string): Promise<string | null> {
     : null;
 }
 
+async function decryptEscrow(raw: string, password: string): Promise<string | null> {
+  try {
+    const payload = JSON.parse(raw) as { salt: string; iv: string; ct: string };
+    const kek = await passwordKEK(password, fromB64(payload.salt));
+    const plain = await subtle().decrypt({ name: "AES-GCM", iv: fromB64(payload.iv) }, kek, fromB64(payload.ct));
+    const jwkStr = new TextDecoder().decode(plain);
+    const jwk = JSON.parse(jwkStr) as JsonWebKey;
+    return jwk.d && jwk.x && jwk.y ? jwkStr : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Recovers the escrowed private key with the login password. Only runs while
- * there is no local key yet (a device that already holds a key keeps it).
- * Returns true when the local store now holds a usable private key.
+ * Installs the escrowed key pair as this device's primary key. A different
+ * key already on the device is kept as a legacy key, so wraps made for it
+ * still open. Returns false when there is no escrow or the password does not
+ * open it.
  */
 export async function recoverPrivateKeyFromEscrow(userId: string, password: string): Promise<boolean> {
   try {
-    if (localStorage.getItem(privStore(userId)) || !password) return false;
+    if (!password) return false;
     const raw = await fetchEscrow(userId);
     if (!raw) return false;
-    const payload = JSON.parse(raw) as { salt: string; iv: string; ct: string };
-    const kek = await passwordKEK(password, fromB64(payload.salt));
-    const plain = await subtle().decrypt(
-      { name: "AES-GCM", iv: fromB64(payload.iv) },
-      kek,
-      fromB64(payload.ct),
-    );
-    const jwk = JSON.parse(new TextDecoder().decode(plain)) as JsonWebKey;
-    if (!jwk.d || !jwk.x || !jwk.y) return false;
-    localStorage.setItem(privStore(userId), JSON.stringify(jwk));
-    // Drop memoized key promises so every path picks up the recovered key.
-    ensureMemo.delete(userId);
-    privCache.delete(userId);
-    pairCache.clear();
+    const jwkStr = await decryptEscrow(raw, password);
+    if (!jwkStr) return false;
+    const current = localStorage.getItem(privStore(userId));
+    if (current && pubOf(current)?.x !== pubOf(jwkStr)?.x) addLegacy(userId, current);
+    localStorage.setItem(privStore(userId), jwkStr);
+    const { data } = await supabase.from("profiles").select("public_key").eq("id", userId).maybeSingle();
+    if (!samePub((data as { public_key: string | null } | null)?.public_key ?? null, pubOf(jwkStr))) {
+      await uploadPublicKey(userId, jwkStr);
+    }
+    resetCaches(userId);
+    window.dispatchEvent(new CustomEvent("e2ee-unlocked"));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Unlocks a "locked" device with the account password. The password is
+ * checked against sign-in first; when it is right but the escrow was made
+ * with an older password, this device's key (or a new one) becomes the
+ * account key and is escrowed with the current password.
+ */
+export async function unlockWithPassword(
+  userId: string,
+  email: string,
+  password: string,
+): Promise<"ok" | "wrong-password" | "failed"> {
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) return "wrong-password";
+  if (await recoverPrivateKeyFromEscrow(userId, password)) return "ok";
+  return (await adoptDeviceKey(userId, password)) ? "ok" : "failed";
+}
+
+/** Makes this device's key (generating one if needed) the account key and escrows it. */
+async function adoptDeviceKey(userId: string, password: string): Promise<boolean> {
+  try {
+    let jwkStr = localStorage.getItem(privStore(userId));
+    if (!jwkStr) {
+      const pair = await subtle().generateKey(ECDH, true, ["deriveKey"]);
+      jwkStr = JSON.stringify(await subtle().exportKey("jwk", pair.privateKey));
+      localStorage.setItem(privStore(userId), jwkStr);
+    }
+    await uploadPublicKey(userId, jwkStr);
+    await escrowPrivateKey(userId, password);
+    resetCaches(userId);
+    window.dispatchEvent(new CustomEvent("e2ee-unlocked"));
     return true;
   } catch {
     return false;
@@ -215,18 +320,27 @@ export async function recoverPrivateKeyFromEscrow(userId: string, password: stri
 }
 
 const pairCache = new Map<string, Promise<CryptoKey>>();
-async function pairKey(userId: string, peerJwk: JsonWebKey): Promise<CryptoKey> {
-  const cacheKey = `${userId}:${peerJwk.x}:${peerJwk.y}`;
+function pairKeyWith(privJwk: string, peerJwk: JsonWebKey): Promise<CryptoKey> {
+  const cacheKey = `${pubOf(privJwk)?.x}:${peerJwk.x}:${peerJwk.y}`;
   let p = pairCache.get(cacheKey);
   if (!p) {
-    const pub = await subtle().importKey("jwk", peerJwk, ECDH, false, []);
-    p = subtle().deriveKey({ name: "ECDH", public: pub }, await myPrivateKey(userId), { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+    p = (async () => {
+      const pub = await subtle().importKey("jwk", peerJwk, ECDH, false, []);
+      return subtle().deriveKey({ name: "ECDH", public: pub }, await importPriv(privJwk), { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+    })();
     pairCache.set(cacheKey, p);
+    p.catch(() => pairCache.delete(cacheKey));
   }
   return p;
 }
+/** Pair key from this device's primary private key (used for wrapping). */
+function pairKey(userId: string, peerJwk: JsonWebKey): Promise<CryptoKey> {
+  return pairKeyWith(localStorage.getItem(privStore(userId))!, peerJwk);
+}
 
 const convKeyCache = new Map<string, Promise<CryptoKey | null>>();
+// The wrap generation (wrapper + timestamp) the cached key came from.
+const convKeyMeta = new Map<string, { wrappedBy: string; createdAt: string }>();
 
 // ---- Per-device keyring -----------------------------------------------------
 // Every conversation key this device has ever successfully derived is kept
@@ -323,32 +437,74 @@ async function memberPublicKeys(conversationId: string): Promise<Map<string, Jso
   return map;
 }
 
-async function unwrapKey(
-  userId: string,
-  peerJwk: JsonWebKey,
-  stored: string,
-): Promise<CryptoKey | null> {
+/** Unwraps with every private key this device holds and every candidate peer key. */
+async function unwrapKey(userId: string, peers: (JsonWebKey | null | undefined)[], stored: string): Promise<CryptoKey | null> {
   const packed = unpack(stored);
   if (!packed) return null;
+  const seen = new Set<string>();
+  for (const peer of peers) {
+    if (!peer?.x || seen.has(peer.x)) continue;
+    seen.add(peer.x);
+    for (const priv of myPrivateJwks(userId)) {
+      try {
+        const pk = await pairKeyWith(priv, peer);
+        const raw = await subtle().decrypt({ name: "AES-GCM", iv: packed.iv }, pk, packed.data);
+        return await subtle().importKey("raw", raw, { name: "AES-GCM" }, true, ["encrypt", "decrypt"]);
+      } catch {
+        // try the next key
+      }
+    }
+  }
+  return null;
+}
+
+type WrapRow = { user_id: string; wrapped_by: string; wrapped_key: string; wrapper_public_key: string | null; created_at: string };
+function parsePub(s: string | null): JsonWebKey | null {
   try {
-    const pk = await pairKey(userId, peerJwk);
-    const raw = await subtle().decrypt({ name: "AES-GCM", iv: packed.iv }, pk, packed.data);
-    return await subtle().importKey("raw", raw, { name: "AES-GCM" }, true, ["encrypt", "decrypt"]);
-  } catch (err) {
+    return s ? (JSON.parse(s) as JsonWebKey) : null;
+  } catch {
     return null;
   }
+}
+
+/** Wraps a raw conversation key for every member with a public key, as one new generation. */
+async function publishKey(
+  conversationId: string,
+  meId: string,
+  raw: Uint8Array<ArrayBuffer>,
+  members: Map<string, JsonWebKey | null>,
+): Promise<string | null> {
+  const myPub = myPublicJwk(meId);
+  const inserts: { conversation_id: string; user_id: string; wrapped_by: string; wrapped_key: string; wrapper_public_key: string | null }[] = [];
+  for (const [uid, peer] of members) {
+    if (!peer) continue;
+    try {
+      const pk = await pairKey(meId, peer);
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const ct = await subtle().encrypt({ name: "AES-GCM", iv }, pk, raw);
+      inserts.push({ conversation_id: conversationId, user_id: uid, wrapped_by: meId, wrapped_key: pack(iv, ct), wrapper_public_key: myPub ? JSON.stringify(myPub) : null });
+    } catch {
+      // member has no usable key yet
+    }
+  }
+  if (!inserts.length) return null;
+  // Insert, never upsert: each publish appends a generation, so older wraps
+  // stay available for history.
+  const { data, error } = await supabase.from("conversation_keys").insert(inserts).select("created_at");
+  if (error) return null;
+  return (data?.[0] as { created_at: string } | undefined)?.created_at ?? new Date().toISOString();
 }
 
 /** Returns the conversation AES key, creating and distributing one when missing. */
 export async function getConversationKey(conversationId: string, meId: string): Promise<CryptoKey | null> {
   const cached = convKeyCache.get(conversationId);
   if (cached) return cached;
+  // Listen for key changes from other members on every opened conversation.
+  keysyncChannel(conversationId);
   const promise = (async () => {
-    await ensureMyKeysOnce(meId);
+    const state = await ensureMyKeysOnce(meId);
     const members = await memberPublicKeys(conversationId);
-    if (!members.has(meId)) {
-      return null; // not a member of this conversation
-    }
+    if (!members.has(meId)) return null; // not a member of this conversation
     const { data: conv } = await supabase
       .from("conversations")
       .select("created_by")
@@ -357,80 +513,110 @@ export async function getConversationKey(conversationId: string, meId: string): 
     const creatorId = (conv as { created_by: string | null } | null)?.created_by ?? meId;
 
     const fetchRows = async () =>
-      (
+      ((
         await supabase
           .from("conversation_keys")
-          .select("wrapped_by, wrapped_key, wrapper_public_key, created_at")
+          .select("user_id, wrapped_by, wrapped_key, wrapper_public_key, created_at")
           .eq("conversation_id", conversationId)
           .eq("user_id", meId)
           .order("created_at", { ascending: false })
-      ).data;
+      ).data ?? []) as WrapRow[];
 
     // Only the conversation creator creates the initial key; other members
     // wait for the creator's wrap instead of racing to rotate their own.
-    const attempts = creatorId === meId ? 1 : 5;
+    const attempts = state === "ready" && creatorId !== meId ? 5 : 1;
     for (let i = 0; i < attempts; i++) {
       if (i > 0) await new Promise((r) => setTimeout(r, 900));
-      const rows = await fetchRows();
-      // Newest wrap first: after a key rotation everyone converges on the latest key.
-      for (const row of (rows ?? []) as { wrapped_by: string; wrapped_key: string; wrapper_public_key: string | null }[]) {
-        // The wrap was created with the wrapper's key pair AT WRAP TIME —
-        // stored on the row, because the wrapper may have since signed in on
-        // a new device and replaced their profile public key.
-        const peer = row.wrapper_public_key
-          ? (JSON.parse(row.wrapper_public_key) as JsonWebKey)
-          : members.get(row.wrapped_by);
-        if (peer) {
-          const key = await unwrapKey(meId, peer, row.wrapped_key);
-          if (key) {
-            rememberKey(conversationId, key);
-            return key;
-          }
-        } else {
+      // Newest wrap first: everyone converges on the latest generation.
+      for (const row of await fetchRows()) {
+        const key = await unwrapKey(meId, [parsePub(row.wrapper_public_key), members.get(row.wrapped_by)], row.wrapped_key);
+        if (key) {
+          convKeyMeta.set(conversationId, { wrappedBy: row.wrapped_by, createdAt: row.created_at });
+          rememberKey(conversationId, key);
+          return key;
         }
       }
     }
-    // No row could be unwrapped (e.g. the member's browser keys changed):
-    // rotate — create a fresh conversation key and re-wrap it for everyone.
+    // A locked device must never rotate: its key does not match the profile,
+    // so nobody (itself included) could read what it publishes.
+    if (state !== "ready") {
+      convKeyCache.delete(conversationId);
+      return null;
+    }
+    // Nothing unwraps: rotate — publish a fresh key for everyone.
     const raw = crypto.getRandomValues(new Uint8Array(32));
     const key = await subtle().importKey("raw", raw, { name: "AES-GCM" }, true, ["encrypt", "decrypt"]);
-    const myPub = myPublicJwk(meId);
-    const inserts: { conversation_id: string; user_id: string; wrapped_by: string; wrapped_key: string; wrapper_public_key: string | null }[] = [];
-    for (const [uid, peer] of members) {
-      if (!peer) continue;
-      try {
-        const pk = await pairKey(meId, peer);
-        const iv = crypto.getRandomValues(new Uint8Array(12));
-        const ct = await subtle().encrypt({ name: "AES-GCM", iv }, pk, raw);
-        inserts.push({ conversation_id: conversationId, user_id: uid, wrapped_by: meId, wrapped_key: pack(iv, ct), wrapper_public_key: myPub ? JSON.stringify(myPub) : null });
-      } catch {
-        // member has no usable key yet
-      }
+    const createdAt = await publishKey(conversationId, meId, raw, members);
+    if (!createdAt) {
+      convKeyCache.delete(conversationId);
+      return null;
     }
-    if (inserts.length) {
-      // Insert, never upsert on (conversation_id, user_id, wrapped_by): a
-      // member rotating twice would otherwise overwrite their previous
-      // generation's wrap — the very row history migration needs to unwrap
-      // older messages. Each rotation appends a new generation instead.
-      const { error } = await supabase
-        .from("conversation_keys")
-        .insert(inserts);
-      if (error) {
-        // Never keep a key that nobody else can obtain — future messages
-        // encrypted with it would be unreadable for every other member.
-        convKeyCache.delete(conversationId);
-        return null;
-      }
-      broadcastRotation(conversationId);
-      rememberKey(conversationId, key);
-      return key;
-    }
-    convKeyCache.delete(conversationId);
-    return null;
+    convKeyMeta.set(conversationId, { wrappedBy: meId, createdAt });
+    broadcastRotation(conversationId);
+    rememberKey(conversationId, key);
+    return key;
   })();
   convKeyCache.set(conversationId, promise);
   promise.catch(() => convKeyCache.delete(conversationId));
   return promise;
+}
+
+/**
+ * Makes sure every member can open the key this device uses. When a member
+ * has no wrap in the current generation (e.g. they had no key when it was
+ * created) or their key changed since this device wrapped it, the key is
+ * re-published as a new generation for all members — so everyone converges
+ * on the same key instead of rotating away from each other.
+ */
+export async function shareConversationKey(conversationId: string, meId: string): Promise<boolean> {
+  try {
+    if ((await ensureMyKeysOnce(meId)) !== "ready") return false;
+    const key = await getConversationKey(conversationId, meId);
+    const meta = convKeyMeta.get(conversationId);
+    if (!key || !meta) return false;
+    const raw = new Uint8Array(await subtle().exportKey("raw", key));
+    const rawB64 = toB64(raw);
+    const members = await memberPublicKeys(conversationId);
+    const { data } = await supabase
+      .from("conversation_keys")
+      .select("user_id, wrapped_by, wrapped_key, wrapper_public_key, created_at")
+      .eq("conversation_id", conversationId)
+      .eq("wrapped_by", meta.wrappedBy);
+    const gen = ((data ?? []) as WrapRow[]).filter((r) => r.created_at === meta.createdAt);
+    let missing = false;
+    for (const [uid, pub] of members) {
+      if (!pub || uid === meId) continue;
+      const row = gen.find((r) => r.user_id === uid);
+      if (!row) {
+        missing = true;
+        break;
+      }
+      if (meta.wrappedBy === meId) {
+        const packed = unpack(row.wrapped_key);
+        let ok = false;
+        if (packed) {
+          try {
+            const pk = await pairKey(meId, pub);
+            ok = toB64(await subtle().decrypt({ name: "AES-GCM", iv: packed.iv }, pk, packed.data)) === rawB64;
+          } catch {
+            ok = false;
+          }
+        }
+        if (!ok) {
+          missing = true;
+          break;
+        }
+      }
+    }
+    if (!missing) return false;
+    const createdAt = await publishKey(conversationId, meId, raw, members);
+    if (!createdAt) return false;
+    convKeyMeta.set(conversationId, { wrappedBy: meId, createdAt });
+    broadcastRotation(conversationId);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Encrypts message text for storage; throws when no conversation key is available. */
@@ -504,17 +690,8 @@ function allWrappedKeys(conversationId: string, meId: string): Promise<CryptoKey
       .order("created_at", { ascending: false });
     const out: CryptoKey[] = [];
     for (const row of (data ?? []) as { wrapped_by: string; wrapped_key: string; wrapper_public_key: string | null }[]) {
-      const peers: JsonWebKey[] = [];
-      if (row.wrapper_public_key) peers.push(JSON.parse(row.wrapper_public_key) as JsonWebKey);
-      const cur = members.get(row.wrapped_by);
-      if (cur) peers.push(cur);
-      for (const peer of peers) {
-        const k = await unwrapKey(meId, peer, row.wrapped_key);
-        if (k) {
-          out.push(k);
-          break;
-        }
-      }
+      const k = await unwrapKey(meId, [parsePub(row.wrapper_public_key), members.get(row.wrapped_by)], row.wrapped_key);
+      if (k) out.push(k);
     }
     return out;
   })().catch(() => [] as CryptoKey[]);
@@ -554,13 +731,7 @@ export async function migrateConversationHistory(conversationId: string, meId: s
       }
     }
     for (const row of (keyRows ?? []) as { wrapped_by: string; wrapped_key: string; wrapper_public_key: string | null }[]) {
-      // Prefer the wrapper's at-wrap-time public key stored on the row; the
-      // wrapper may have since rotated their browser key pair.
-      const peer = row.wrapper_public_key
-        ? (JSON.parse(row.wrapper_public_key) as JsonWebKey)
-        : members.get(row.wrapped_by);
-      if (!peer) continue;
-      const k = await unwrapKey(meId, peer, row.wrapped_key);
+      const k = await unwrapKey(meId, [parsePub(row.wrapper_public_key), members.get(row.wrapped_by)], row.wrapped_key);
       if (!k) continue;
       const raw = toB64(await subtle().exportKey("raw", k));
       if (raw !== currentRaw && !ringRaws.has(raw)) candidates.set(raw, k);
@@ -606,8 +777,12 @@ export async function migrateConversationHistory(conversationId: string, meId: s
 export async function setupKeysAfterSignIn(userId: string, password: string): Promise<void> {
   try {
     if (await recoverPrivateKeyFromEscrow(userId, password)) return;
-    await ensureMyKeys(userId);
-    await escrowPrivateKey(userId, password);
+    resetCaches(userId);
+    const state = await ensureMyKeys(userId);
+    if (state === "ready") await escrowPrivateKey(userId, password);
+    // Locked right after a successful password sign-in means the escrow was
+    // made with an older password: this device's key becomes the account key.
+    else if (state === "locked") await adoptDeviceKey(userId, password);
   } catch {
     // E2EE setup is best-effort; chat falls back to the no-key path.
   }

@@ -9,6 +9,9 @@
   Fix: private key escrow encrypted with the login password (profiles.encrypted_private_key,
   PBKDF2 150k + AES-GCM); recovered at sign-in via setupKeysAfterSignIn (src/routes/auth.tsx).
   Falls back to the old rotate path for OAuth (no password) sign-ins.
+- [x] **Divergent-device fix VERIFIED 2026-10-29** (16/16 two-account cases): a device whose key differs from the
+  account key, or a restored session with no key, is locked and unlocks with the password instead of overwriting
+  the account key; any member re-shares the key and re-encrypts readable history.
 - [x] `[e2ee]` debug console logs removed from src/lib/e2ee.ts after verification
 - [x] Signup 50 credits, live notification bell, one-view, premium save controls, deleted-note
 - [x] Online/last seen, typing + recording animations, clear chat, block/report/report-and-block, premium self-unblock

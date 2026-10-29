@@ -30,7 +30,7 @@ import { useCurrentProfile } from "@/hooks/use-current-user";
 import { usePremium } from "@/hooks/use-premium";
 import { useMediaSrc } from "@/hooks/use-media-url";
 import { uploadFile } from "@/lib/media";
-import { decryptStoredText, encryptText, migrateConversationHistory } from "@/lib/e2ee";
+import { decryptStoredText, encryptText, getKeyState, migrateConversationHistory, shareConversationKey, unlockWithPassword } from "@/lib/e2ee";
 import { oneViewReopenable, tickState, type TickState } from "@/lib/chat-rules";
 import { formatClockTime, formatDuration, formatLastSeen } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -335,26 +335,70 @@ function ConversationPage() {
     };
   }, [id, qc, me]);
 
-  // Re-decrypt history after a live conversation-key rotation from any member.
-  // The creator additionally re-encrypts older history into the new key so a
-  // member who rotated (e.g. new device) can read the messages again.
+  // Keys: a device whose key does not match the account (new device or an
+  // old divergent key) must unlock with the password before it can read.
+  const [keysLocked, setKeysLocked] = useState(false);
+  const [unlockPassword, setUnlockPassword] = useState("");
+  const [unlocking, setUnlocking] = useState(false);
+
+  // Repair on open, after a rotation, and after unlocking: re-share the key
+  // with any member who cannot open it, re-encrypt history this device can
+  // still read into it, then re-decrypt the list.
   useEffect(() => {
+    if (!me) return;
+    let cancelled = false;
+    const repair = async () => {
+      const state = await getKeyState(me.id);
+      if (cancelled) return;
+      setKeysLocked(state === "locked");
+      if (state !== "ready") return;
+      const shared = await shareConversationKey(id, me.id);
+      const migrated = await migrateConversationHistory(id, me.id);
+      if (!cancelled && (shared || migrated > 0)) void qc.invalidateQueries({ queryKey: ["messages", id] });
+    };
+    void repair();
     const onRotated = (e: Event) => {
       const detail = (e as CustomEvent<{ conversationId?: string }>).detail;
       if (detail?.conversationId !== id) return;
       void qc.invalidateQueries({ queryKey: ["messages", id] });
-      if (me && conv.data?.created_by === me.id) void migrateConversationHistory(id, me.id);
+      void repair();
+    };
+    const onUnlocked = () => {
+      void qc.invalidateQueries({ queryKey: ["messages", id] });
+      void repair();
     };
     window.addEventListener("conv-key-rotated", onRotated);
-    return () => window.removeEventListener("conv-key-rotated", onRotated);
-  }, [id, qc, me, conv.data?.created_by]);
+    window.addEventListener("e2ee-unlocked", onUnlocked);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("conv-key-rotated", onRotated);
+      window.removeEventListener("e2ee-unlocked", onUnlocked);
+    };
+  }, [id, qc, me]);
 
-  // Covers a rotation that happened while this member (the key owner) was
-  // offline: migrating on open repairs the history for everyone.
-  useEffect(() => {
-    if (!me || !conv.data || conv.data.created_by !== me.id) return;
-    void migrateConversationHistory(id, me.id);
-  }, [id, me, conv.data?.created_by]);
+  async function unlockKeys(e: FormEvent) {
+    e.preventDefault();
+    if (!me || !unlockPassword) return;
+    setUnlocking(true);
+    try {
+      const { data } = await supabase.auth.getUser();
+      const email = data.user?.email;
+      if (!email) {
+        toast.error("Sign in with your email and password to unlock your messages");
+        return;
+      }
+      const result = await unlockWithPassword(me.id, email, unlockPassword);
+      if (result === "wrong-password") toast.error("That password is not correct");
+      else if (result === "failed") toast.error("Could not unlock messages — please try again");
+      else {
+        setUnlockPassword("");
+        setKeysLocked(false);
+        toast.success("Messages unlocked on this device");
+      }
+    } finally {
+      setUnlocking(false);
+    }
+  }
 
   // mark read + scroll to bottom
   useEffect(() => {
@@ -777,6 +821,26 @@ function ConversationPage() {
             <span className="block truncate">{conv.data.pinned_body}</span>
           </span>
         </div>
+      )}
+
+      {keysLocked && (
+        <form onSubmit={unlockKeys} className="flex flex-wrap items-center gap-2 border-b border-border bg-secondary/60 px-4 py-3 text-sm">
+          <span className="w-full text-foreground sm:w-auto sm:flex-1">
+            Your messages are locked on this device. Enter your account password to read them.
+          </span>
+          <Input
+            type="password"
+            autoComplete="current-password"
+            value={unlockPassword}
+            onChange={(e) => setUnlockPassword(e.target.value)}
+            placeholder="Password"
+            aria-label="Account password"
+            className="h-9 w-44"
+          />
+          <Button type="submit" size="sm" disabled={unlocking || !unlockPassword}>
+            {unlocking ? "Unlocking…" : "Unlock"}
+          </Button>
+        </form>
       )}
 
       {/* messages */}
