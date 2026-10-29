@@ -69,6 +69,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Popover, PopoverTrigger } from "@/components/ui/popover";
+import { ChatPicker } from "@/components/chat-picker";
 
 type Wallpaper = { kind: "preset"; id: string } | { kind: "image"; path: string };
 
@@ -164,6 +166,7 @@ function ConversationPage() {
   const call = useCallEngine();
   const [wallpaperOpen, setWallpaperOpen] = useState(false);
   const [wallpaper, setWallpaper] = useState<Wallpaper | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   // Wallpaper is a per-device preference, kept in localStorage per conversation.
   useEffect(() => {
