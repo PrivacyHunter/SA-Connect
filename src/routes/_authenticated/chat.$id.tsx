@@ -107,6 +107,34 @@ const WALLPAPER_PRESETS: { id: string; label: string; style: CSSProperties }[] =
   },
 ];
 
+/** Chat-header presence line: scrolls overflowing text (e.g. long last-seen) back and forth. */
+function ScrollingSubtitle({ text }: { text: string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [shift, setShift] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    const parent = el?.parentElement;
+    if (!el || !parent) return;
+    const check = () => setShift(Math.max(0, el.scrollWidth - parent.clientWidth + 12));
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(parent);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [text]);
+  return (
+    <span className="block min-w-0 flex-1 overflow-hidden whitespace-nowrap">
+      <span
+        ref={ref}
+        className={cn("inline-block", shift > 0 && "subtitle-marquee")}
+        style={{ "--subtitle-shift": `${-shift}px` } as CSSProperties}
+      >
+        {text}
+      </span>
+    </span>
+  );
+}
+
 function TypingDots() {
   return (
     <span className="inline-flex items-end gap-0.5" aria-hidden>
@@ -746,8 +774,8 @@ function ConversationPage() {
         )}
         <div className="min-w-0 flex-1">
           <h2 className="truncate font-semibold">{title ?? "Loading…"}</h2>
-          <p className={cn("flex items-center gap-1 truncate text-xs text-muted-foreground", (activityLabel || (isDm && otherOnline)) && "text-gold")}>
-            {myMember?.muted && <BellOff className="inline h-3 w-3" />}
+          <p className={cn("flex min-w-0 items-center gap-1 text-xs text-muted-foreground", (activityLabel || (isDm && otherOnline)) && "text-gold")}>
+            {myMember?.muted && <BellOff className="inline h-3 w-3 shrink-0" />}
             {activityLabel ? (
               <>
                 {activityKind === "recording" ? <RecordingBars /> : <TypingDots />}
@@ -755,12 +783,12 @@ function ConversationPage() {
               </>
             ) : isDm ? (
               other ? (
-                chatBlocked ? "encrypted" : otherOnline ? "Online" : other.profiles.last_seen_at ? `Last seen ${formatLastSeen(other.profiles.last_seen_at)}` : "Last seen a while ago"
+                <ScrollingSubtitle text={chatBlocked ? "encrypted" : otherOnline ? "Online" : other.profiles.last_seen_at ? `Last seen ${formatLastSeen(other.profiles.last_seen_at)}` : "Last seen a while ago"} />
               ) : (
                 "encrypted"
               )
             ) : (
-              `${members.length} ${members.length === 1 ? "member" : "members"}${isChannel ? " · broadcast channel · encrypted" : " · group · encrypted"}`
+              <ScrollingSubtitle text={`${members.length} ${members.length === 1 ? "member" : "members"}${isChannel ? " · broadcast channel · encrypted" : " · group · encrypted"}`} />
             )}
           </p>
         </div>
