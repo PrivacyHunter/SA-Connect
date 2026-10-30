@@ -774,8 +774,8 @@ function ConversationPage() {
         )}
         <div className="min-w-0 flex-1">
           <h2 className="truncate font-semibold">{title ?? "Loading…"}</h2>
-          <p className={cn("flex items-center gap-1 truncate text-xs text-muted-foreground", (activityLabel || (isDm && otherOnline)) && "text-gold")}>
-            {myMember?.muted && <BellOff className="inline h-3 w-3" />}
+          <p className={cn("flex min-w-0 items-center gap-1 text-xs text-muted-foreground", (activityLabel || (isDm && otherOnline)) && "text-gold")}>
+            {myMember?.muted && <BellOff className="inline h-3 w-3 shrink-0" />}
             {activityLabel ? (
               <>
                 {activityKind === "recording" ? <RecordingBars /> : <TypingDots />}
@@ -783,12 +783,12 @@ function ConversationPage() {
               </>
             ) : isDm ? (
               other ? (
-                chatBlocked ? "encrypted" : otherOnline ? "Online" : other.profiles.last_seen_at ? `Last seen ${formatLastSeen(other.profiles.last_seen_at)}` : "Last seen a while ago"
+                <ScrollingSubtitle text={chatBlocked ? "encrypted" : otherOnline ? "Online" : other.profiles.last_seen_at ? `Last seen ${formatLastSeen(other.profiles.last_seen_at)}` : "Last seen a while ago"} />
               ) : (
                 "encrypted"
               )
             ) : (
-              `${members.length} ${members.length === 1 ? "member" : "members"}${isChannel ? " · broadcast channel · encrypted" : " · group · encrypted"}`
+              <ScrollingSubtitle text={`${members.length} ${members.length === 1 ? "member" : "members"}${isChannel ? " · broadcast channel · encrypted" : " · group · encrypted"}`} />
             )}
           </p>
         </div>
