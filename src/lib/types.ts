@@ -39,6 +39,7 @@ export interface ConversationMember {
   user_id: string;
   last_read_at: string | null;
   muted: boolean;
+  deleted_at?: string | null;
   profiles: Profile;
 }
 
