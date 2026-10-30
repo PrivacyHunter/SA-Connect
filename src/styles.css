@@ -245,3 +245,8 @@ body {
 .marquee:hover .marquee-track { animation-play-state: paused; }
 @keyframes marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
 @media (prefers-reduced-motion: reduce) { .marquee-track { animation: none; } }
+
+/* Chat-header subtitle: scrolls long text (last seen, member counts) back and forth like a marquee */
+@keyframes subtitle-marquee { 0%, 20% { transform: translateX(0); } 80%, 100% { transform: translateX(var(--subtitle-shift, 0px)); } }
+.subtitle-marquee { animation: subtitle-marquee 7s ease-in-out infinite alternate; }
+@media (prefers-reduced-motion: reduce) { .subtitle-marquee { animation: none; } }

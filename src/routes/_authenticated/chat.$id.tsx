@@ -107,6 +107,34 @@ const WALLPAPER_PRESETS: { id: string; label: string; style: CSSProperties }[] =
   },
 ];
 
+/** Chat-header presence line: scrolls overflowing text (e.g. long last-seen) back and forth. */
+function ScrollingSubtitle({ text }: { text: string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [shift, setShift] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    const parent = el?.parentElement;
+    if (!el || !parent) return;
+    const check = () => setShift(Math.max(0, el.scrollWidth - parent.clientWidth + 12));
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(parent);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [text]);
+  return (
+    <span className="block min-w-0 flex-1 overflow-hidden whitespace-nowrap">
+      <span
+        ref={ref}
+        className={cn("inline-block", shift > 0 && "subtitle-marquee")}
+        style={{ "--subtitle-shift": `${-shift}px` } as CSSProperties}
+      >
+        {text}
+      </span>
+    </span>
+  );
+}
+
 function TypingDots() {
   return (
     <span className="inline-flex items-end gap-0.5" aria-hidden>
