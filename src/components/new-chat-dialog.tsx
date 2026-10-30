@@ -149,7 +149,7 @@ export function NewChatDialog({
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search people by name or @username"
+            placeholder="Search your contacts by name or @username"
             className="pl-9"
           />
         </div>
@@ -158,7 +158,8 @@ export function NewChatDialog({
           {results.isLoading && <p className="p-2 text-sm text-muted-foreground">Searching…</p>}
           {results.data?.length === 0 && (
             <p className="p-2 text-sm text-muted-foreground">
-              No people found. Ask a friend to sign up first.
+              No contacts found. Invite friends from the Contacts page — only your saved contacts, referral
+              connections and people you already chat with appear here.
             </p>
           )}
           {results.data?.map((p) => {
